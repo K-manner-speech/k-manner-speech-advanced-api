@@ -1,3 +1,5 @@
 # Local AI agent configuration
 .agents/
 .claude/
+.DS_Store
+
