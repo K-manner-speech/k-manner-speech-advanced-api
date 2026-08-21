@@ -106,17 +106,15 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 
 ### 4.1 색상
 
+색상값의 단일 기준(Source of Truth)은 Figma `Foundations Documentation`의 `Color Tokens` 프레임(`203:1700`)이다. 이 문서, Figma 변수, 실제 화면과 구현 코드는 아래 토큰 이름과 값을 동일하게 사용한다. 화면 노드에 HEX 값을 직접 입력하지 않고 해당 Figma 색상 변수를 바인딩한다.
+
 #### 브랜드와 인터랙션
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |
 | `color-brand-50` | `#F2F5FF` | 선택 배경, 약한 강조 |
-| `color-brand-100` | `#E3EAFF` | 정보 배경, 배지 |
-| `color-brand-300` | `#9DB5F5` | 보조 강조 |
-| `color-brand-500` | `#5B7FDC` | 보조 버튼, 활성 요소 |
 | `color-brand-600` | `#4169D8` | 기본 CTA, 링크, 선택 테두리 |
-| `color-brand-700` | `#3157BB` | 호버·눌림 상태 |
-| `color-brand-800` | `#284798` | 강조 텍스트 |
+| `color-brand-700` | `#3157BB` | 호버·눌림 상태, 강조 텍스트 |
 
 #### 중성색
 
@@ -126,19 +124,9 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 | `color-neutral-50` | `#FBFAF7` | 기본 앱 배경 |
 | `color-neutral-100` | `#F4F1EA` | 보조 배경, 비활성 면 |
 | `color-neutral-200` | `#E5E0D6` | 구분선, 테두리 |
-| `color-neutral-400` | `#B3AA99` | 비활성 아이콘 |
-| `color-neutral-500` | `#837A6D` | 보조 텍스트 |
+| `color-neutral-500` | `#837A6D` | 보조 텍스트, 비활성 아이콘 |
 | `color-neutral-700` | `#4A453E` | 본문 텍스트 |
 | `color-neutral-900` | `#23211E` | 제목, 핵심 텍스트 |
-
-#### 표면 색상
-
-| 토큰 | 값 | 용도 |
-| --- | --- | --- |
-| `color-surface-app` | `#FBFAF7` | 모바일 앱 기본 배경 |
-| `color-surface-card` | `#FFFFFF` | 카드, 메시지, 바텀시트 |
-| `color-surface-muted` | `#F4F1EA` | 비활성 카드, 보조 블록 |
-| `color-surface-web` | `#F3F5F8` | 앱형 화면을 감싸는 넓은 웹 배경 |
 
 #### 의미 색상
 
@@ -149,6 +137,24 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 | `color-danger-600` | `#DC2626` | 오류, 녹음 실패, 위험 동작 |
 | `color-info-600` | `#2563EB` | 안내, 시스템 정보 |
 
+#### 의미형 색상 매핑
+
+| 의미형 토큰 | 참조 토큰 | 화면 적용 대상 |
+| --- | --- | --- |
+| `color-surface-app` | `color-neutral-50` | 모바일 앱과 앱형 웹 셸의 기본 배경 |
+| `color-surface-web` | `color-neutral-100` | 앱형 화면을 감싸는 넓은 웹 배경 |
+| `color-surface-card` | `color-neutral-0` | 카드, 입력창, 메시지, 바텀시트 |
+| `color-surface-muted` | `color-neutral-100` | 비활성 카드, 보조 블록, 이미지 placeholder |
+| `color-surface-selected` | `color-brand-50` | 선택된 카드·행·칩 배경 |
+| `color-action-primary` | `color-brand-600` | Primary CTA, 활성 아이콘·내비게이션 |
+| `color-action-primary-hover` | `color-brand-700` | Primary hover·pressed |
+| `color-text-primary` | `color-neutral-900` | 제목, 본문, 핵심 정보 |
+| `color-text-secondary` | `color-neutral-500` | 설명, 메타데이터, placeholder |
+| `color-border-default` | `color-neutral-200` | 카드, 입력창, 구분선 |
+| `color-border-selected` | `color-brand-600` | 선택된 카드·입력의 경계 |
+
+Figma 화면에서는 위 의미형 토큰을 우선 바인딩한다. 의미형 변수가 아직 생성되지 않았다면 표의 참조 토큰을 직접 바인딩하되 HEX 하드코딩은 허용하지 않는다.
+
 #### 감정 색상
 
 | 감정 | 주 색상 | 약한 배경 | 사용 규칙 |
@@ -156,7 +162,7 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 | 기쁨 | `#D97706` | `#FFFBEB` | 햇빛·활기, 성공 의미와 혼용하지 않음 |
 | 슬픔 | `#2563EB` | `#EFF6FF` | 차분함, 오류 의미로 사용하지 않음 |
 | 화남 | `#DC2626` | `#FEF2F2` | 감정 표현, 시스템 오류와 라벨로 구분 |
-| 중립·분석 중 | `#64748B` | `#F8FAFC` | 감정 미확정 또는 기본 상태 |
+| 중립·분석 중 | `#837A6D` | `#FBFAF7` | 감정 미확정 또는 기본 상태 |
 
 감정은 색상만으로 구분하지 않는다. 감정명, 아이콘 또는 페르소나 표정 중 하나 이상을 함께 제공한다.
 
@@ -213,16 +219,16 @@ font-family: "Pretendard Variable", "Noto Sans KR", -apple-system,
 | `radius-lg` | `16px` | 카드, 피드백 블록 |
 | `radius-xl` | `24px` | 대화 패널, 모달 |
 | `radius-full` | `9999px` | 아바타, 칩, 녹음 버튼 |
-| `border-default` | `1px solid #E2E8F0` | 일반 경계 |
+| `border-default` | `1px solid #E5E0D6` | 일반 경계 |
 | `border-focus` | `2px solid #4169D8` | 키보드 포커스 |
 
 ### 4.5 그림자
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |
-| `shadow-sm` | `0 1px 2px rgba(15,23,42,.06)` | 입력, 작은 카드 |
-| `shadow-md` | `0 8px 24px rgba(15,23,42,.10)` | 떠 있는 패널 |
-| `shadow-lg` | `0 20px 48px rgba(15,23,42,.14)` | 모달, 데스크톱 상세 패널 |
+| `shadow-sm` | `0 1px 2px rgba(35,33,30,.06)` | 입력, 작은 카드 |
+| `shadow-md` | `0 8px 24px rgba(35,33,30,.10)` | 떠 있는 패널 |
+| `shadow-lg` | `0 20px 48px rgba(35,33,30,.14)` | 모달, 데스크톱 상세 패널 |
 
 그림자보다 배경과 테두리로 구조를 먼저 구분한다.
 
@@ -688,7 +694,6 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
 ```css
 :root {
   --color-brand-50: #f2f5ff;
-  --color-brand-100: #e3eaff;
   --color-brand-600: #4169d8;
   --color-brand-700: #3157bb;
   --color-neutral-0: #ffffff;
@@ -698,11 +703,22 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
   --color-neutral-500: #837a6d;
   --color-neutral-700: #4a453e;
   --color-neutral-900: #23211e;
-  --color-surface-web: #f3f5f8;
   --color-success-600: #059669;
   --color-warning-600: #d97706;
   --color-danger-600: #dc2626;
   --color-info-600: #2563eb;
+
+  --color-surface-app: var(--color-neutral-50);
+  --color-surface-web: var(--color-neutral-100);
+  --color-surface-card: var(--color-neutral-0);
+  --color-surface-muted: var(--color-neutral-100);
+  --color-surface-selected: var(--color-brand-50);
+  --color-action-primary: var(--color-brand-600);
+  --color-action-primary-hover: var(--color-brand-700);
+  --color-text-primary: var(--color-neutral-900);
+  --color-text-secondary: var(--color-neutral-500);
+  --color-border-default: var(--color-neutral-200);
+  --color-border-selected: var(--color-brand-600);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -718,8 +734,8 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px rgb(15 23 42 / 6%);
-  --shadow-md: 0 8px 24px rgb(15 23 42 / 10%);
+  --shadow-sm: 0 1px 2px rgb(35 33 30 / 6%);
+  --shadow-md: 0 8px 24px rgb(35 33 30 / 10%);
 }
 ```
 

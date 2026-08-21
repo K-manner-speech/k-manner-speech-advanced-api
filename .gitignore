@@ -1,5 +1,6 @@
 # Local AI agent configuration
 .agents/
 .claude/
+.codex/
 .DS_Store
 
