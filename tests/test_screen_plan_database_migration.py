@@ -97,6 +97,79 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
         ):
             self.assertIn(index, self.sql)
 
+    def test_p3_interview_configuration_question_answer_model(self):
+        for table in (
+            "interview_configurations",
+            "interview_questions",
+            "interview_answers",
+        ):
+            self.assertIn(f"create table if not exists public.{table}", self.sql)
+        self.assert_sql(r"unique\s*\(setup_id,\s*version_no\)")
+        self.assert_sql(r"unique\s*\(setup_id,\s*idempotency_key\)")
+        self.assert_sql(r"unique\s*\(configuration_id,\s*sequence_no\)")
+        self.assertIn("interview_answers_one_current_idx", self.sql)
+        self.assertIn("synchronize_interview_question_count", self.sql)
+
+    def test_p3_interview_model_has_rls(self):
+        for table in (
+            "interview_configurations",
+            "interview_questions",
+            "interview_answers",
+        ):
+            self.assertIn(f"alter table public.{table} enable row level security", self.sql)
+        self.assertIn("interview_configurations_own_all", self.sql)
+        self.assertIn("interview_questions_own_configuration", self.sql)
+        self.assertIn("interview_answers_own_configuration", self.sql)
+
+    def test_p4_score_sum_trigger_and_emotion_limits(self):
+        self.assertIn("recalculate_turn_feedback_overall_score", self.sql)
+        self.assertIn("feedback_scores_recalculate_overall_trigger", self.sql)
+        self.assertIn("validate_feedback_emotion_limit", self.sql)
+        self.assert_sql(r"percentage.*between 0 and 100")
+        self.assert_sql(r"sort_order.*between 1 and 3")
+        self.assert_sql(r"unique\s*\(feedback_id,\s*emotion_label\)")
+
+    def test_p4_profile_and_required_consent_contract(self):
+        self.assertIn("create table if not exists public.consent_policies", self.sql)
+        self.assertIn("validate_profile_onboarding_completion", self.sql)
+        self.assertIn("btrim(display_name)", self.sql)
+        self.assertIn("birth_date <= current_date", self.sql)
+        self.assertIn("display_language in ('ko', 'en')", self.sql)
+
+    def test_p5_partial_unique_room_indexes(self):
+        for index in (
+            "practice_rooms_one_active_free_chat_idx",
+            "practice_rooms_one_active_scenario_idx",
+            "practice_rooms_one_active_interview_idx",
+        ):
+            self.assertIn(index, self.sql)
+        self.assertIn("interview_configuration_id", self.sql)
+
+    def test_p6_deletion_queue_lock_and_retry_contract(self):
+        for column in (
+            "next_attempt_at",
+            "locked_at",
+            "locked_by",
+            "lock_expires_at",
+            "max_attempts",
+        ):
+            self.assertIn(column, self.sql)
+        self.assertIn("storage_deletion_jobs_claim_idx", self.sql)
+
+    def test_p6_processing_timeout_contract(self):
+        self.assertIn("create table if not exists public.processing_timeout_policies", self.sql)
+        for column in ("processing_token", "deadline_at", "next_attempt_at"):
+            self.assertIn(column, self.sql)
+        for index in (
+            "message_ai_processing_timeout_idx",
+            "message_emotion_analysis_timeout_idx",
+            "message_audio_timeout_idx",
+            "turn_feedback_timeout_idx",
+            "interview_document_analyses_timeout_idx",
+            "interview_configurations_timeout_idx",
+        ):
+            self.assertIn(index, self.sql)
+
 
 if __name__ == "__main__":
     unittest.main()
