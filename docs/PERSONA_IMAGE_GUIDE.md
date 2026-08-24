@@ -8,7 +8,7 @@
 
 - 페르소나는 실제 인물 사진과 유사한 자연스러운 AI 생성 이미지로 제작한다.
 - MVP에서는 실시간 이미지 생성 대신 검수된 감정별 이미지를 사전에 준비한다.
-- 각 페르소나는 `neutral`, `happy`, `sad`, `angry` 네 장을 기본 세트로 갖는다.
+- 각 페르소나는 `neutral`, `happy`, `sad`, `angry`, `curious`, `embarrassment` 여섯 장을 기본 세트로 갖는다.
 - 감정이 바뀌어도 동일 인물로 즉시 인식할 수 있어야 한다.
 - 표정은 학습 맥락을 돕는 수준으로 표현하며 과장하거나 위협적으로 만들지 않는다.
 - 실제 인물이나 유명인을 모방하지 않고, 권리와 동의가 확인되지 않은 참조 사진을 사용하지 않는다.
@@ -94,13 +94,25 @@ do_not_change: 얼굴, 머리, 안경, 의상, 배경, 구도, 조명
 - 고함, 위협, 주먹, 공격 자세, 심하게 붉어진 얼굴은 금지
 - 학습자가 상대 반응을 이해하는 데 필요한 수준으로 제한
 
+### 4.5 Curious
+
+- 주의 깊게 듣고 더 알고 싶어 하는 표정
+- 눈과 눈썹의 미세한 변화로 표현하고 과장된 고개 기울임은 피함
+- neutral과 동일한 자세·구도·의상을 유지
+
+### 4.6 Embarrassment
+
+- 난처함이나 조심스러운 당황이 드러나는 절제된 표정
+- 공포, 수치심 또는 희화화된 표정으로 과장하지 않음
+- 시선과 입 주변의 미세한 변화만 허용하고 신체 자세는 유지
+
 ## 5. 제작 흐름
 
 1. 페르소나 정의서를 승인한다.
 2. `neutral` 기준 이미지를 여러 장 생성한다.
 3. 얼굴 일관성, 역할 적합성, 편향과 안전성을 검수해 기준 이미지를 한 장 선택한다.
-4. 기준 이미지를 참조 이미지로 사용해 `happy`, `sad`, `angry`를 생성한다.
-5. 네 장을 동시에 비교해 인물·구도·의상·배경 일관성을 검수한다.
+4. 기준 이미지를 참조 이미지로 사용해 `happy`, `sad`, `angry`, `curious`, `embarrassment`를 생성한다.
+5. 여섯 장을 동시에 비교해 인물·구도·의상·배경 일관성을 검수한다.
 6. 필요한 이미지만 다시 생성하거나 편집한다.
 7. 최종 원본과 서비스용 파생 이미지를 저장한다.
 8. 매니페스트에 경로, 버전과 검수 상태를 기록한다.
@@ -137,6 +149,8 @@ body position, accessories or environment.
 - `happy`: 자연스럽고 절제된 미소
 - `sad`: 차분하고 약한 슬픔, 눈물 없음
 - `angry`: 위협적이지 않은 불편함과 단호함
+- `curious`: 주의 깊게 듣고 더 알고 싶어 하는 절제된 표정
+- `embarrassment`: 난처함이 드러나지만 과장되지 않은 당황
 
 ### 6.3 네거티브 지시
 
@@ -159,16 +173,22 @@ assets/personas/
       happy.png
       sad.png
       angry.png
+      curious.png
+      embarrassment.png
     web/
       neutral.webp
       happy.webp
       sad.webp
       angry.webp
+      curious.webp
+      embarrassment.webp
     thumbnail/
       neutral.webp
       happy.webp
       sad.webp
       angry.webp
+      curious.webp
+      embarrassment.webp
     persona.json
 ```
 
@@ -190,7 +210,9 @@ assets/personas/
     "neutral": "/assets/personas/interviewer-seojun/web/neutral.webp",
     "happy": "/assets/personas/interviewer-seojun/web/happy.webp",
     "sad": "/assets/personas/interviewer-seojun/web/sad.webp",
-    "angry": "/assets/personas/interviewer-seojun/web/angry.webp"
+    "angry": "/assets/personas/interviewer-seojun/web/angry.webp",
+    "curious": "/assets/personas/interviewer-seojun/web/curious.webp",
+    "embarrassment": "/assets/personas/interviewer-seojun/web/embarrassment.webp"
   },
   "fallback": "neutral",
   "review_status": "approved"
@@ -199,18 +221,26 @@ assets/personas/
 
 ## 9. 감정값 매핑
 
-Gemini의 원본 응답은 공용 매퍼에서 다음 네 상태 중 하나로 정규화한다.
+Gemini의 원본 응답은 공용 매퍼에서 다음 여섯 상태 중 하나로 정규화한다.
 
 | 모델 감정 예시 | 이미지 상태 |
 | --- | --- |
 | 기쁨, 즐거움, 만족 | `happy` |
 | 슬픔, 실망 | `sad` |
 | 화남, 불쾌함, 짜증 | `angry` |
-| 보통, 궁금, 당황, 불확실 | `neutral` |
+| 궁금, 호기심 | `curious` |
+| 당황, 난처함 | `embarrassment` |
+| 보통, 불확실 | `neutral` |
 | 누락, 알 수 없음, 분석 실패 | `neutral` |
 
 ```ts
-type PersonaEmotion = "neutral" | "happy" | "sad" | "angry";
+type PersonaEmotion =
+  | "neutral"
+  | "happy"
+  | "sad"
+  | "angry"
+  | "curious"
+  | "embarrassment";
 ```
 
 - 모델 문자열을 이미지 경로에 직접 결합하지 않는다.
@@ -231,7 +261,7 @@ type PersonaEmotion = "neutral" | "happy" | "sad" | "angry";
 
 ### 인물 일관성
 
-- [ ] 네 이미지가 같은 인물로 즉시 인식된다.
+- [ ] 여섯 이미지가 같은 인물로 즉시 인식된다.
 - [ ] 얼굴형, 눈, 코, 입과 피부색이 유지된다.
 - [ ] 나이대와 성별 표현이 갑자기 바뀌지 않는다.
 - [ ] 머리, 안경, 의상과 액세서리가 동일하다.
@@ -239,7 +269,7 @@ type PersonaEmotion = "neutral" | "happy" | "sad" | "angry";
 
 ### 감정과 품질
 
-- [ ] 네 감정의 차이를 색상 없이 표정으로 구분할 수 있다.
+- [ ] 여섯 감정의 차이를 색상 없이 표정으로 구분할 수 있다.
 - [ ] 감정이 과장되거나 위협적이지 않다.
 - [ ] 얼굴, 손, 치아, 안경 등에 생성 오류가 없다.
 - [ ] 이미지에 글자, 로고, 워터마크가 없다.
@@ -265,7 +295,7 @@ type PersonaEmotion = "neutral" | "happy" | "sad" | "angry";
 ## 12. 승인과 변경 관리
 
 - 페르소나 정의서와 `neutral` 기준 이미지는 감정 변형 전에 승인한다.
-- 네 장의 이미지 세트는 낱장이 아닌 한 화면에서 비교해 승인한다.
+- 여섯 장의 이미지 세트는 낱장이 아닌 한 화면에서 비교해 승인한다.
 - 얼굴 또는 의상 변경은 새 감정 이미지가 아니라 페르소나 새 버전으로 취급한다.
 - 승인된 원본, 생성 설정, 참조 이미지와 검수 기록을 함께 보관한다.
 - 생성 도구나 모델을 변경하면 기존 세트와 시각적 일관성을 다시 검수한다.
