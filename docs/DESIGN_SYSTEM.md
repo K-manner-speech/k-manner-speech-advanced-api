@@ -106,7 +106,9 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 
 ### 4.1 색상
 
-색상값의 단일 기준(Source of Truth)은 Figma `Foundations Documentation`의 `Color Tokens` 프레임(`203:1700`)이다. 이 문서, Figma 변수, 실제 화면과 구현 코드는 아래 토큰 이름과 값을 동일하게 사용한다. 화면 노드에 HEX 값을 직접 입력하지 않고 해당 Figma 색상 변수를 바인딩한다.
+색상값의 단일 기준(Source of Truth)은 Figma `260820-1129` 파일(`G8GxBvtJDcALvKcGvaSHhH`)의 `01 Screen Plan 1.0` 페이지(`299:2165`) 안에 있는 `00 Foundations · Reusable Tokens` 섹션(`320:2`)과 `Foundation / Colors` 프레임(`320:5`)이다. 이 문서, Figma 변수, 실제 화면과 구현 코드는 아래 토큰 이름과 값을 동일하게 사용한다. 화면 노드에 HEX 값을 직접 입력하지 않고 해당 Figma 색상 변수를 바인딩한다.
+
+Figma 1.0 화면의 디자인 시스템 검수 범위는 `01 인증·온보딩`, `02 홈·연습 탐색`, `03 대화 연습`, `04 면접 연습`, `05 결과·복습`, `06 내 정보`, `07 대화방 목록` 섹션으로 한정한다. `08 팝업 화면`과 `09 상태 화면 · Loading · Empty · Error · Partial` 섹션은 이번 디자인 시스템 기준과 색상 검수 범위에서 제외하며, 해당 섹션에만 존재하는 색상은 공식 토큰으로 간주하지 않는다.
 
 #### 브랜드와 인터랙션
 
