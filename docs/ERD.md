@@ -7,11 +7,12 @@
 
 ## 1. 목적과 읽는 법
 
-이 문서는 API·Repository·RLS·삭제 생명주기 설계를 검토하기 위한 논리 ERD다. 한 장에 모든 테이블을 배치하지 않고 다음 세 영역으로 나눈다.
+이 문서는 API·Repository·RLS·삭제 생명주기 설계를 검토하기 위한 논리 ERD다. 한 장에 모든 테이블을 배치하지 않고 다음 네 영역으로 나눈다.
 
 1. 인증·카탈로그·대화
 2. 피드백·음성·결과
 3. 면접 문서·분석·질문
+4. 비동기 실행·멱등성
 
 표기 규칙은 다음과 같다.
 
@@ -487,6 +488,7 @@ erDiagram
 ### 4.1 핵심 제약과 상태
 
 - 현재 문서는 `(setup_id, document_type)`별 `is_current = true`이고 삭제되지 않은 버전이 하나만 존재한다.
+- Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
 - 문서 분석은 `(document_id, idempotency_key)`가 unique이며 문서 삭제를 `RESTRICT`해 분석 생명주기를 먼저 정리하도록 한다.
 - `interview_configurations.analysis_ids`는 분석 ID snapshot 배열이며 FK 배열이 아니다. 참조 무결성은 Service/Repository가 검증한다.
 - 면접 설정은 `(setup_id, version_no)`와 `(setup_id, idempotency_key)`가 unique다.
@@ -513,7 +515,130 @@ erDiagram
 
 `interview_setups.user_id`와 `interview_documents.setup_id/user_id`의 기존 FK 삭제 동작은 현재 저장소의 incremental migration만으로 확정하지 않는다.
 
-## 5. 사용자 소유권 경로
+## 5. 영역 4 — 비동기 실행·멱등성
+
+```mermaid
+erDiagram
+    AUTH_USERS {
+        uuid id PK
+    }
+
+    PROCESSING_JOBS {
+        uuid id PK
+        uuid user_id FK
+        text job_type
+        text status
+        text progress_stage
+        bigint completed_units
+        bigint total_units
+        uuid message_ai_processing_id FK
+        uuid message_emotion_analysis_id FK
+        uuid message_audio_id FK
+        uuid turn_feedback_id FK
+        uuid interview_document_analysis_id FK
+        uuid interview_configuration_id FK
+        uuid session_result_id FK
+        integer transport_attempt_count
+        smallint schema_repair_count
+        timestamptz deadline_at
+        timestamptz next_attempt_at
+        text error_code
+        boolean error_retryable
+        jsonb error_meta
+        timestamptz started_at
+        timestamptz completed_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    IDEMPOTENCY_RECORDS {
+        uuid id PK
+        uuid user_id FK
+        text action_scope
+        uuid idempotency_key
+        bytea request_fingerprint
+        text state
+        uuid claim_token
+        timestamptz lease_expires_at
+        smallint response_status
+        jsonb response_body
+        text response_schema_version
+        uuid processing_job_id FK
+        text resource_type
+        uuid resource_id
+        text error_code
+        boolean error_retryable
+        jsonb error_meta
+        timestamptz completed_at
+        timestamptz expires_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    AUTH_USERS ||--o{ PROCESSING_JOBS : owns
+    AUTH_USERS ||--o{ IDEMPOTENCY_RECORDS : owns
+    PROCESSING_JOBS o|--o{ IDEMPOTENCY_RECORDS : replayed_by
+    MESSAGE_AI_PROCESSING ||--o{ PROCESSING_JOBS : target
+    MESSAGE_EMOTION_ANALYSIS ||--o{ PROCESSING_JOBS : target
+    MESSAGE_AUDIO ||--o{ PROCESSING_JOBS : target
+    TURN_FEEDBACK ||--o{ PROCESSING_JOBS : target
+    INTERVIEW_DOCUMENT_ANALYSES ||--o{ PROCESSING_JOBS : target
+    INTERVIEW_CONFIGURATIONS ||--o{ PROCESSING_JOBS : target
+    SESSION_RESULTS ||--o{ PROCESSING_JOBS : target
+```
+
+`idempotency_records`의 unique key는 각 column 단독이 아니라 `(user_id, action_scope, idempotency_key)` 복합 unique다.
+
+### 5.1 Job 유형·상태·대상
+
+| `job_type` | 값이 존재해야 하는 단일 target FK | 성공 시 domain 상태 |
+| --- | --- | --- |
+| `conversation_text` | `message_ai_processing_id` | `succeeded` |
+| `emotion_analysis` | `message_emotion_analysis_id` | `succeeded` |
+| `tts_generation` | `message_audio_id` | `ready` |
+| `turn_feedback` | `turn_feedback_id` | `ready` 또는 `partial` |
+| `interview_document_analysis` | `interview_document_analysis_id` | `succeeded` |
+| `interview_configuration_generation` | `interview_configuration_id` | `ready` |
+| `session_result_generation` | `session_result_id` | `partial` 또는 `succeeded` |
+
+- Job 상태는 `queued`, `processing`, `succeeded`, `failed`, `cancelled`다. Job 실행 상태와 domain 결과 상태는 각자의 진실 원본이며 Worker가 한 transaction에서 전이표에 맞게 갱신한다.
+- 일곱 target FK 중 정확히 하나만 값이 있어야 하며 `job_type`과 일치해야 한다. 직접 `user_id`와 target owner chain의 최종 소유자는 insert/update trigger로 같음을 강제한다.
+- 사용자/API 수준의 retry·regeneration은 새 Job row를 만든다. Provider transport retry와 structured-output repair는 같은 Job의 `transport_attempt_count`, `schema_repair_count`로 기록한다. 동일 target의 활성(`queued|processing`) Job은 최대 하나다.
+- `queued`와 terminal 상태에서는 `progress_stage`가 `NULL`이다. 처리 중에는 실제 확인 가능한 단계만 사용하며, 신뢰 가능한 총량이 있을 때만 `completed_units/total_units`를 기록한다. 시간 경과 기반 가짜 백분율은 만들지 않는다.
+- terminal Job은 불변이다. 실패에는 공개 가능한 `error_code`, `error_retryable`, allowlist `error_meta`만 저장한다. Provider 원문·프롬프트·응답·stack trace는 저장하지 않는다.
+- API의 `result_resource`는 성공 시 target 관계에서 `{type, id}`로 파생한다. 결과 본문과 URL은 Job row에 복제하지 않는다.
+- timeout policy key는 위 canonical `job_type`을 사용한다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+
+### 5.2 진행 단계 허용 목록
+
+| `job_type` | 허용 `progress_stage` |
+| --- | --- |
+| `conversation_text` | `context_preparing`, `provider_processing`, `saving_response` |
+| `emotion_analysis` | `provider_processing`, `saving_analysis` |
+| `tts_generation` | `provider_processing`, `storing_audio` |
+| `turn_feedback` | `provider_processing`, `saving_feedback` |
+| `interview_document_analysis` | `extracting_text`, `chunking`, `embedding`, `saving_analysis` |
+| `interview_configuration_generation` | `retrieving_evidence`, `provider_processing`, `saving_configuration` |
+| `session_result_generation` | `aggregating_evidence`, `provider_processing`, `saving_result` |
+
+### 5.3 멱등성 상태와 복구
+
+- `idempotency_records.state`는 `in_progress`, `completed`, `failed`다. 최초 요청이 unique insert로 선점한다.
+- 같은 key·같은 fingerprint가 처리 중이면 `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`를 반환하며 새 resource/Job을 만들지 않는다. 완료 상태면 생성 당시 schema version의 안전한 HTTP 응답 snapshot을 재생한다. 같은 key의 다른 fingerprint는 `409`다.
+- fingerprint는 서버가 action별 canonical payload로 만든 SHA-256이다. 파일은 원문 대신 streaming SHA-256과 안전한 metadata를 포함한다.
+- stale claim은 `claim_token + lease_expires_at`의 CAS로 하나의 요청만 인계하며, 기존 resource/Job을 먼저 조정한 뒤 없을 때만 재실행한다.
+- 확정적인 non-retryable 4xx는 안전한 snapshot으로 재생한다. 429·일시적 5xx·timeout과 결과가 불명확한 실패는 같은 key로 reconcile-first 복구한다.
+- snapshot에는 token, signed URL, 문서·대화 원문, Provider 원본 응답을 저장하지 않는다. action/state별 설정에서 계산한 `expires_at` 이후 batch로 정리한다. 보존시간과 lease 숫자는 로컬 측정 전 임의로 고정하지 않는다.
+- `processing_job_id`는 `ON DELETE SET NULL`이다. 여러 domain resource는 `resource_type + resource_id` 논리 locator로 기록하여 원본 삭제 뒤에도 snapshot을 만료까지 재생한다.
+
+### 5.4 삭제·RLS 경계
+
+- 일곱 target FK는 `ON DELETE CASCADE`다. Service가 먼저 queue cleanup과 stale guard를 수행한 뒤 target을 삭제한다. 삭제된 Job polling은 `404`이며 별도 Job audit row는 보존하지 않는다.
+- `processing_jobs`는 `authenticated`의 owner `SELECT` RLS만 허용한다. insert/update/delete는 API/Worker 전용이다.
+- `idempotency_records`에는 Browser용 policy나 권한이 없다. fingerprint, claim, replay snapshot은 Repository/서버만 다룬다.
+- 두 테이블의 `user_id`는 `auth.users.id ON DELETE CASCADE`다. 다른 사용자 소유와 미존재 resource는 API에서 동일한 `404`로 처리한다.
+
+## 6. 사용자 소유권 경로
 
 FastAPI는 아래 경로를 Repository query의 동일 predicate 또는 `JOIN/EXISTS` 안에서 검증한다. RLS는 `public` Data API 접근에 대한 추가 방어 계층이며 이 검사를 대신하지 않는다.
 
@@ -545,22 +670,25 @@ flowchart LR
     R --> IAN["interview_answers.room_id"]
 
     U --> SDJ["storage_deletion_jobs.user_id"]
+    U --> PJ["processing_jobs.user_id + target owner trigger"]
+    U --> IR["idempotency_records.user_id"]
 ```
 
-### 5.1 RLS/Repository 기준
+### 6.1 RLS/Repository 기준
 
 | 소유권 유형 | 대표 테이블 | 판정 기준 |
 | --- | --- | --- |
-| 직접 사용자 소유 | `profiles`, `practice_rooms`, `session_results`, `interview_documents`, `interview_document_analyses`, `interview_configurations`, `storage_deletion_jobs` | `user_id = authenticated_user_id` 또는 `id = authenticated_user_id` |
+| 직접 사용자 소유 | `profiles`, `practice_rooms`, `session_results`, `interview_documents`, `interview_document_analyses`, `interview_configurations`, `storage_deletion_jobs`, `processing_jobs`, `idempotency_records` | `user_id = authenticated_user_id` 또는 `id = authenticated_user_id` |
+| Job 이중 소유 검증 | `processing_jobs` | 직접 `user_id`와 type별 target owner chain이 모두 인증 사용자와 일치 |
 | 방을 통한 간접 소유 | `room_messages`, `message_ai_processing`, `message_emotion_analysis`, `message_audio`, `turn_feedback`, `room_contexts`, `room_success_condition_progress`, `interview_answers` | `resource → room_messages/practice_rooms → practice_rooms.user_id` |
 | 결과를 통한 간접 소유 | `result_items` | `result_items.result_id → session_results.user_id` |
 | 면접 configuration을 통한 간접 소유 | `interview_questions` | `question.configuration_id → interview_configurations.user_id` |
 | 인증 사용자 공용 읽기 | `consent_policies`, `scenario_success_conditions` 및 활성 catalog | `authenticated` read policy와 server-side active/allowed filter |
-| 서버 정책 데이터 | `processing_timeout_policies` | Browser CRUD 대상이 아니며 API/worker가 정책으로 사용 |
+| 서버 내부 정책·재생 데이터 | `processing_timeout_policies`, `idempotency_records` | Browser CRUD 대상이 아니며 API/worker가 정책·중복 방지에 사용 |
 
 다른 사용자 소유와 실제 미존재 리소스는 FastAPI에서 동일한 `404` 계약을 사용한다. 생성 요청의 `user_id`, `owner_id`, Storage object key는 신뢰하지 않고 JWT subject와 서버 생성값으로 확정한다.
 
-## 6. 삭제·보존 경계 요약
+## 7. 삭제·보존 경계 요약
 
 | 삭제 대상 | 보존 또는 정리 원칙 |
 | --- | --- |
@@ -570,17 +698,20 @@ flowchart LR
 | 생성 음성 | 교체된 Storage object는 즉시 영구 삭제하고 DB에는 current version을 하나만 유지한다. |
 | 회원 | 사용자 소유 DB row, Storage object, vector, job을 owner 범위에서 정리한다. 일부 삭제만 완료된 상태를 성공으로 반환하지 않는다. |
 | Storage 삭제 작업 | `(bucket_id, storage_path)`당 하나의 durable claim으로 재시도하며 source FK 대신 `source_type/source_id` 논리 참조를 사용한다. |
+| 공통 Job | 사용자 또는 target 삭제 시 `CASCADE`; 삭제 전 queue cleanup·stale guard를 수행하며 별도 audit row는 보존하지 않는다. |
+| 멱등 기록 | 사용자 삭제 시 `CASCADE`; Job 삭제 시 FK만 `SET NULL`; 논리 resource locator와 안전한 snapshot은 `expires_at`까지 유지한다. |
 
-## 7. API 설계 시 확인할 경계
+## 8. API 설계 시 확인할 경계
 
 - API DTO는 이 ERD의 persistence column을 그대로 노출하지 않는다. 특히 `user_id`, processing token, Storage path와 내부 error message는 서버 내부 값이다.
+- `claim_token`, `request_fingerprint`, `lease_expires_at`, 응답 snapshot과 Provider 원본 오류도 API DTO에 노출하지 않는다. Job API는 안전한 `type/status/progress/error/result_resource`만 노출한다.
 - `POST /rooms`, 메시지 전송, retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다.
 - 비동기 처리 상태는 AI 응답, 감정, 음성, 피드백, 문서 분석, 면접 configuration별로 독립적으로 표현한다.
 - 목록 cursor는 반드시 인증 사용자 소유 집합 안에서 계산한다.
 - 문서 version, 분석, 면접 configuration과 결과 snapshot은 API 응답에서 각각의 식별자와 사용 version을 명확히 구분한다.
 - ERD와 실제 Supabase가 다르면 Supabase에 적용된 migration 결과를 우선 확인하고, 차이를 새 migration과 이 문서에 함께 반영한다.
 
-## 8. 관련 문서와 변경 원본
+## 9. 관련 문서와 변경 원본
 
 - `docs/PRD.md`
 - `docs/화면기획서.md`
@@ -589,5 +720,7 @@ flowchart LR
 - `supabase/migrations/20260824060000_screen_plan_contract.sql`
 - `supabase/migrations/20260824063000_result_snapshot_ownership_fix.sql`
 - `supabase/migrations/20260824070000_priorities_3_4_5_6_schema.sql`
+- `supabase/migrations/20260825090000_processing_jobs_and_idempotency.sql`
+- `supabase/migrations/20260825100000_add_session_result_timeout_policy.sql`
 
 스키마 변경 시 migration과 이 문서를 같은 변경 단위에서 갱신한다. 운영 전환 전 비노출 `app` schema로 이전한다면 이 문서는 `TO-BE` ERD가 아니라 새 실제 상태를 나타내도록 함께 개정한다.
