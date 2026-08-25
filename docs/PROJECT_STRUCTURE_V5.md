@@ -1,6 +1,6 @@
 # K-Manner Speech 프로젝트 구조 컨벤션 v5
 
-> 이 문서는 `k-manner-speech-api`와 `k-manner-speech-front`를 위한 최종 목표 구조다. 구조 이동, 제품 도메인 재명명, 도구 전환은 각각 독립된 변경으로 관리한다.
+> 이 문서는 로컬 MVP의 현행 Supabase 기준과 `k-manner-speech-api`, `k-manner-speech-front`의 목표 구조를 함께 정의한다. 구조 이동, migration 도구 전환, 제품 도메인 재명명은 각각 독립된 변경으로 관리한다.
 
 ## 0. 확정한 결정
 
@@ -13,10 +13,11 @@
 | Back | FastAPI + SQLAlchemy 유지 | 현재 구현과 일치 |
 | Python 런타임 | **Python 3.11.15** | 팀의 고정 실행 환경 |
 | Python 가상환경 | **`genai/`** | API 저장소 루트의 로컬 개발 가상환경 이름 |
-| DB 마이그레이션 | Alembic 단일 기준 | 모델과 DB 변경 이력의 단일 소유자 |
+| DB 마이그레이션 | 로컬 MVP는 `supabase/migrations/*.sql` 단일 기준 | 현재 Supabase 스키마와 저장소 상태에 일치; Alembic 전환 시 한 번에 이관 |
 | DB 연결 | 서버 전용 `DATABASE_URL`로 Supabase pooler의 Postgres 사용자에 접속 | SQLAlchemy 연결 방식과 일치 |
 | 소유권 통제 | 서비스 계층에서 검증된 사용자 ID로 모든 사용자 소유 쿼리를 제한 | 요청별 JWT를 DB 세션에 주입하지 않음 |
-| RLS | Data API 직접 접근 제한용, 서버 DB 쿼리의 백업 통제로 가정하지 않음 | DB 역할과 요청 컨텍스트가 별개 |
+| DB schema | 로컬 MVP는 Supabase `public` 유지 | 이미 적용된 테이블·FK·trigger·RLS를 활용하고 시연 전 불필요한 이전을 피함 |
+| RLS | `public` Data API 직접 접근의 방어 계층, 서버 owner 검사의 대체 수단은 아님 | DB 역할과 요청 컨텍스트가 별개 |
 | Repository | 선택적 도입 | 단순 CRUD에 불필요한 계층을 만들지 않음 |
 | AI | `app/ai/`는 공급자·프롬프트, `app/services/`는 유스케이스 | 외부 구현과 도메인 규칙 분리 |
 | Feature 참조 | `index.ts` 공개 API만 허용, deep import·순환 참조 금지 | 기능 응집과 재사용의 균형 |
@@ -92,7 +93,7 @@ k-manner-speech-api/
 │   ├── models/                  # SQLAlchemy 영속성 모델
 │   ├── repositories/            # 필요한 도메인만 사용하는 쿼리 경계
 │   └── ai/                      # 프롬프트와 AI 공급자 구현
-├── migrations/                  # Alembic 변경 이력
+├── migrations/                  # Alembic 전환 후 변경 이력; 전환 전에는 생성하지 않음
 ├── tests/
 ├── scripts/
 ├── docs/
@@ -288,12 +289,13 @@ Pydantic schema
 
 RLS는 노출 스키마의 Data API에서 anon/authenticated 직접 접근을 제한한다. 서버 DB 쿼리의 소유권 누락을 막는 장치로 가정하지 않는다. Supabase 서비스 역할은 RLS를 우회하므로 서버 전용으로 관리해야 한다. [Supabase RLS 문서](https://supabase.com/docs/guides/database/postgres/row-level-security)
 
-Alembic을 DB 변경 이력의 단일 기준으로 사용한다.
+로컬 MVP에서는 이 저장소의 `supabase/migrations/*.sql`을 DB 변경 이력의 단일 기준으로 사용한다. 목표 API 저장소에서 Alembic으로 전환한다면 현재 Supabase 상태를 기준 revision으로 만든 뒤 소유권을 한 번에 넘긴다.
 
 1. 모델, 마이그레이션, RLS·GRANT·Data API 노출 정책은 같은 PR에서 검토한다.
 2. 노출 스키마의 테이블에는 RLS를 활성화한다.
 3. Front가 직접 사용하지 않는 서비스 테이블은 `anon`·`authenticated`의 불필요한 권한을 회수하거나 Data API 노출을 제한한다.
-4. 같은 스키마 변경을 Alembic과 별도 수동 SQL 파일 양쪽에서 중복 관리하지 않는다.
+4. 같은 스키마 변경을 Supabase SQL migration과 Alembic 양쪽에서 중복 관리하지 않는다.
+5. 운영 전환 전 `public` 유지와 비노출 `app` schema 이전을 threat model, Data API 사용 범위, 배포 DB role에 맞춰 재검토한다.
 
 ## 10. 테스트와 CI
 
@@ -302,7 +304,7 @@ API
   lint               uv run ruff check app tests
   unit-test          uv run pytest tests/unit
   integration-test   uv run pytest tests/integration tests/contract
-  migration-check    Alembic head와 모델 메타데이터 검증
+  migration-check    현행 Supabase SQL migration 재적용 검증; Alembic 전환 후에는 head와 모델 메타데이터 검증
   openapi-check      OpenAPI 생성과 breaking 변경 검사
   image-build        Docker 이미지 빌드
 
@@ -334,16 +336,17 @@ k-manner-speech-front/web/.env.example
 2. Python 3.11.15용 `genai/` 환경을 만들고 의존성 설치·린트·테스트를 검증한다.
 3. Python 지원 범위, 잠금 파일, CI, Docker, README를 3.11.15로 통일한다.
 4. 동작 변경 없이 파일·import만 정리하고 기존 테스트·빌드를 통과시킨다.
-5. `app/ai/`, 선택적 Repository, OpenAPI 생성 자동화를 각각 독립 작업으로 도입한다.
-6. API 소유권 통합 테스트와 Data API 권한 검토를 추가한다.
-7. `web/` 평탄화와 제품 도메인 재명명은 각각 별도 ADR과 전용 PR로 처리한다.
+5. 현재 `supabase/migrations/*.sql` 재적용과 `public` RLS policy를 검증한다.
+6. `app/ai/`, 선택적 Repository, OpenAPI 생성 자동화를 각각 독립 작업으로 도입한다.
+7. API 소유권 통합 테스트와 Data API 권한 검토를 추가한다.
+8. `web/` 평탄화와 제품 도메인 재명명은 각각 별도 ADR과 전용 PR로 처리한다.
 
 ## 12. 저장소별 소유권과 변경 판단
 
 | 대상 | 소유 저장소 |
 | --- | --- |
 | HTTP API와 OpenAPI 원본 | `k-manner-speech-api` |
-| SQLAlchemy 모델, Alembic, RLS·GRANT·Data API 정책 | `k-manner-speech-api` |
+| 현행 Supabase SQL migration, RLS·GRANT·Data API 정책 | `k-manner-speech-advanced`; Alembic 전환 후에는 `k-manner-speech-api` |
 | AI·TTS·외부 공급자 비밀값 | `k-manner-speech-api` |
 | 페이지, UI, 브라우저 상태 | `k-manner-speech-front` |
 | Supabase 사용자 세션 | `k-manner-speech-front` |
