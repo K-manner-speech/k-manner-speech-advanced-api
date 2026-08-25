@@ -489,7 +489,7 @@ erDiagram
 
 - 현재 문서는 `(setup_id, document_type)`별 `is_current = true`이고 삭제되지 않은 버전이 하나만 존재한다.
 - Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
-- 문서 분석은 `(document_id, idempotency_key)`가 unique이며 문서 삭제를 `RESTRICT`해 분석 생명주기를 먼저 정리하도록 한다.
+- 문서 분석은 `(document_id, idempotency_key)`가 unique이며 FK의 `ON DELETE RESTRICT`로 분석이 참조하는 문서 row의 물리 삭제를 막는다. 자료 삭제·교체 API는 문서 row를 `is_current = false`, `deleted_at = now()`로 논리 삭제하고 Storage 원본과 해당 vector만 정리하며 완료된 분석은 보존한다.
 - `interview_configurations.analysis_ids`는 분석 ID snapshot 배열이며 FK 배열이 아니다. 참조 무결성은 Service/Repository가 검증한다.
 - 면접 설정은 `(setup_id, version_no)`와 `(setup_id, idempotency_key)`가 unique다.
 - 한 setup에는 `processing`, `ready`, `in_progress` 상태의 활성 configuration이 하나만 존재한다.
@@ -638,6 +638,12 @@ erDiagram
 - `idempotency_records`에는 Browser용 policy나 권한이 없다. fingerprint, claim, replay snapshot은 Repository/서버만 다룬다.
 - 두 테이블의 `user_id`는 `auth.users.id ON DELETE CASCADE`다. 다른 사용자 소유와 미존재 resource는 API에서 동일한 `404`로 처리한다.
 
+### 5.5 Worker heartbeat
+
+`worker_heartbeats`는 `(worker_id, queue_name)` 복합 primary key와 `started_at`, `last_seen_at`을 가진 서버 내부 운영 테이블이다. `queue_name`은 `conversation_text`, `interactive_ai`, `document_analysis`만 허용한다. Worker는 같은 key를 upsert하며 API readiness는 필수 queue마다 `WORKER_HEARTBEAT_TTL_SECONDS` 이내의 row가 하나 이상 있는지 검사한다.
+
+이 테이블은 RLS를 활성화하되 Browser policy를 만들지 않으며 `anon`, `authenticated`의 모든 권한을 회수한다. heartbeat TTL은 측정값이므로 DB default나 코드 default를 두지 않는다.
+
 ## 6. 사용자 소유권 경로
 
 FastAPI는 아래 경로를 Repository query의 동일 predicate 또는 `JOIN/EXISTS` 안에서 검증한다. RLS는 `public` Data API 접근에 대한 추가 방어 계층이며 이 검사를 대신하지 않는다.
@@ -694,9 +700,9 @@ flowchart LR
 | --- | --- |
 | 대화방 | 메시지와 방 종속 처리 상태·맥락·진행률·면접 답변은 종속 삭제 대상이다. 실제 삭제 전에 진행 중 worker 결과를 stale 처리한다. |
 | 세션 결과 | 방과 독립된 snapshot으로 보존한다. 방 삭제 시 `session_results.room_id`만 `NULL`이 된다. |
-| 면접 문서 | 현재/교체 버전, 분석, Storage original, 진행 중 job을 함께 조정한다. 분석이 참조 중인 문서의 물리 삭제는 `RESTRICT`된다. |
+| 면접 문서 | 삭제·교체 시 문서 row를 논리 삭제하고 Storage 원본·해당 vector와 진행 중 Job을 정리하며 완료된 분석은 보존한다. 분석이 참조 중인 문서의 물리 삭제는 `RESTRICT`된다. 삭제된 원본과 보존 분석은 새 분석·면접 구성 입력으로 재사용하지 않는다. |
 | 생성 음성 | 교체된 Storage object는 즉시 영구 삭제하고 DB에는 current version을 하나만 유지한다. |
-| 회원 | 사용자 소유 DB row, Storage object, vector, job을 owner 범위에서 정리한다. 일부 삭제만 완료된 상태를 성공으로 반환하지 않는다. |
+| 회원 탈퇴 | 사용자 소유 문서와 분석을 포함한 DB row, Storage object, vector, Job을 모두 영구 삭제한다. 일부 삭제만 완료된 상태를 성공으로 반환하지 않는다. |
 | Storage 삭제 작업 | `(bucket_id, storage_path)`당 하나의 durable claim으로 재시도하며 source FK 대신 `source_type/source_id` 논리 참조를 사용한다. |
 | 공통 Job | 사용자 또는 target 삭제 시 `CASCADE`; 삭제 전 queue cleanup·stale guard를 수행하며 별도 audit row는 보존하지 않는다. |
 | 멱등 기록 | 사용자 삭제 시 `CASCADE`; Job 삭제 시 FK만 `SET NULL`; 논리 resource locator와 안전한 snapshot은 `expires_at`까지 유지한다. |
@@ -705,7 +711,7 @@ flowchart LR
 
 - API DTO는 이 ERD의 persistence column을 그대로 노출하지 않는다. 특히 `user_id`, processing token, Storage path와 내부 error message는 서버 내부 값이다.
 - `claim_token`, `request_fingerprint`, `lease_expires_at`, 응답 snapshot과 Provider 원본 오류도 API DTO에 노출하지 않는다. Job API는 안전한 `type/status/progress/error/result_resource`만 노출한다.
-- `POST /rooms`, 메시지 전송, retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다.
+- `POST /rooms`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다.
 - 비동기 처리 상태는 AI 응답, 감정, 음성, 피드백, 문서 분석, 면접 configuration별로 독립적으로 표현한다.
 - 목록 cursor는 반드시 인증 사용자 소유 집합 안에서 계산한다.
 - 문서 version, 분석, 면접 configuration과 결과 snapshot은 API 응답에서 각각의 식별자와 사용 version을 명확히 구분한다.

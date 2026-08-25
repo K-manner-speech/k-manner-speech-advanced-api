@@ -1,0 +1,473 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
+
+
+class ConversationRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def find_active_room(
+        self,
+        authenticated_user_id: UUID,
+        request: RoomCreateRequest,
+    ) -> dict[str, Any] | None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                select id, title, practice_type, persona_id, scenario_id, status,
+                       turn_count, ended_reason, started_at, completed_at, updated_at,
+                       goal_snapshot as goal
+                from public.practice_rooms
+                where user_id = :authenticated_user_id
+                  and practice_type = :practice_type
+                  and persona_id is not distinct from :persona_id
+                  and scenario_id is not distinct from :scenario_id
+                  and status = 'in_progress'
+                """
+                ),
+                {
+                    "authenticated_user_id": authenticated_user_id,
+                    **request.model_dump(),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
+    def validate_catalog(self, request: RoomCreateRequest) -> dict[str, Any] | None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                select p.name as persona_name, s.title as scenario_title, s.goal
+                from public.personas p
+                left join public.scenarios s
+                  on s.id = :scenario_id and s.is_active = true
+                left join public.persona_scenarios ps
+                  on ps.persona_id = p.id and ps.scenario_id = s.id
+                where p.id = :persona_id and p.is_active = true
+                  and (
+                    (:practice_type = 'free_chat' and :scenario_id is null)
+                    or
+                    (:practice_type = 'scenario' and s.id is not null and ps.persona_id is not null)
+                  )
+                """
+                ),
+                request.model_dump(),
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
+    def create_room(
+        self,
+        authenticated_user_id: UUID,
+        request: RoomCreateRequest,
+        catalog: dict[str, Any],
+    ) -> dict[str, Any]:
+        title = catalog["scenario_title"] or catalog["persona_name"]
+        row = (
+            self._session.execute(
+                text(
+                    """
+                insert into public.practice_rooms
+                    (user_id, practice_type, persona_id, scenario_id, title, goal_snapshot)
+                values
+                    (:authenticated_user_id, :practice_type, :persona_id, :scenario_id,
+                     :title, :goal)
+                returning id, title, practice_type, persona_id, scenario_id, status,
+                          turn_count, ended_reason, started_at, completed_at, updated_at,
+                          goal_snapshot as goal
+                """
+                ),
+                {
+                    "authenticated_user_id": authenticated_user_id,
+                    **request.model_dump(),
+                    "title": title,
+                    "goal": catalog["goal"],
+                },
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+    def list_rooms(
+        self,
+        authenticated_user_id: UUID,
+        limit: int,
+        status: str | None,
+        practice_type: str | None,
+    ) -> list[dict[str, Any]]:
+        rows = self._session.execute(
+            text(
+                """
+                select id, title, practice_type, persona_id, scenario_id, status,
+                       turn_count, ended_reason, started_at, completed_at, updated_at
+                from public.practice_rooms
+                where user_id = :authenticated_user_id
+                  and (:status is null or status = :status)
+                  and (:practice_type is null or practice_type = :practice_type)
+                order by updated_at desc, id desc
+                limit :limit
+                """
+            ),
+            {
+                "authenticated_user_id": authenticated_user_id,
+                "limit": limit,
+                "status": status,
+                "practice_type": practice_type,
+            },
+        ).mappings()
+        return [dict(row) for row in rows]
+
+    def get_room(self, authenticated_user_id: UUID, room_id: UUID) -> dict[str, Any] | None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                select id, title, practice_type, persona_id, scenario_id, status,
+                       turn_count, ended_reason, started_at, completed_at, updated_at,
+                       goal_snapshot as goal
+                from public.practice_rooms
+                where id = :room_id and user_id = :authenticated_user_id
+                """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
+    def delete_room(self, authenticated_user_id: UUID, room_id: UUID) -> bool:
+        self._session.execute(
+            text(
+                """
+                update public.processing_jobs j
+                set status = 'cancelled', completed_at = now(), updated_at = now()
+                where j.user_id = :authenticated_user_id
+                  and j.status in ('queued', 'processing')
+                  and exists (
+                    select 1
+                    from public.room_messages m
+                    left join public.message_ai_processing a on a.message_id = m.id
+                    left join public.message_emotion_analysis e on e.message_id = m.id
+                    left join public.message_audio au on au.message_id = m.id
+                    left join public.turn_feedback f on f.message_id = m.id
+                    where m.room_id = :room_id
+                      and (j.message_ai_processing_id = a.id
+                        or j.message_emotion_analysis_id = e.id
+                        or j.message_audio_id = au.id
+                        or j.turn_feedback_id = f.id)
+                  )
+                """
+            ),
+            {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+        )
+        result = self._session.execute(
+            text(
+                """
+                delete from public.practice_rooms
+                where id = :room_id and user_id = :authenticated_user_id
+                returning id
+                """
+            ),
+            {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+        )
+        return result.scalar_one_or_none() is not None
+
+    def list_messages(
+        self, authenticated_user_id: UUID, room_id: UUID, limit: int
+    ) -> list[dict[str, Any]] | None:
+        if self.get_room(authenticated_user_id, room_id) is None:
+            return None
+        rows = self._session.execute(
+            text(
+                """
+                select m.id, m.room_id, m.sequence_no, m.sender_type, m.content,
+                       m.input_mode, m.delivery_status, m.reply_to_message_id,
+                       m.created_at, m.updated_at,
+                       e.processing_status as emotion_status,
+                       e.emotion_label, e.reasoning
+                from public.room_messages m
+                left join public.message_emotion_analysis e on e.message_id = m.id
+                where m.room_id = :room_id
+                order by m.sequence_no, m.id
+                limit :limit
+                """
+            ),
+            {"room_id": room_id, "limit": limit},
+        ).mappings()
+        return [dict(row) for row in rows]
+
+    def create_message_and_job(
+        self,
+        authenticated_user_id: UUID,
+        room_id: UUID,
+        request: MessageCreateRequest,
+        deadline_seconds: int,
+        user_queue_limit: int,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        room = (
+            self._session.execute(
+                text(
+                    """
+                select id, status
+                from public.practice_rooms
+                where id = :room_id and user_id = :authenticated_user_id
+                for update
+                """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if room is None:
+            raise LookupError("room not found")
+        if room["status"] != "in_progress":
+            raise RuntimeError("room is not active")
+
+        active_jobs = self._session.execute(
+            text(
+                """
+                select count(*) from public.processing_jobs
+                where user_id = :authenticated_user_id
+                  and status in ('queued', 'processing')
+                """
+            ),
+            {"authenticated_user_id": authenticated_user_id},
+        ).scalar_one()
+        if active_jobs >= user_queue_limit:
+            raise OverflowError("user queue limit exceeded")
+
+        sequence_no = self._session.execute(
+            text(
+                "select coalesce(max(sequence_no), 0) + 1 from public.room_messages "
+                "where room_id = :room_id"
+            ),
+            {"room_id": room_id},
+        ).scalar_one()
+        message_row = (
+            self._session.execute(
+                text(
+                    """
+                insert into public.room_messages
+                    (room_id, sequence_no, sender_type, content, input_mode,
+                     delivery_status, transcript_confirmed, client_request_id)
+                values
+                    (:room_id, :sequence_no, 'user', :content, :input_mode,
+                     'sent', true, :client_request_id)
+                returning id, room_id, sequence_no, sender_type, content, input_mode,
+                          delivery_status, reply_to_message_id, created_at, updated_at
+                """
+                ),
+                {"room_id": room_id, "sequence_no": sequence_no, **request.model_dump()},
+            )
+            .mappings()
+            .one()
+        )
+        processing_id = self._session.execute(
+            text(
+                """
+                insert into public.message_ai_processing
+                    (message_id, processing_status, deadline_at)
+                values (:message_id, 'processing', :deadline_at)
+                returning id
+                """
+            ),
+            {
+                "message_id": message_row["id"],
+                "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
+            },
+        ).scalar_one()
+        job_row = self.insert_job(
+            authenticated_user_id,
+            "conversation_text",
+            "message_ai_processing_id",
+            processing_id,
+            deadline_seconds,
+        )
+        self.enqueue("conversation_text", job_row["id"], authenticated_user_id)
+        return dict(message_row), job_row
+
+    def insert_job(
+        self,
+        authenticated_user_id: UUID,
+        job_type: str,
+        target_column: str,
+        target_id: UUID,
+        deadline_seconds: int,
+    ) -> dict[str, Any]:
+        allowed_columns = {
+            "message_ai_processing_id",
+            "message_emotion_analysis_id",
+            "message_audio_id",
+            "turn_feedback_id",
+            "interview_document_analysis_id",
+            "interview_configuration_id",
+            "session_result_id",
+        }
+        if target_column not in allowed_columns:
+            raise ValueError("unsupported job target")
+        job_id = uuid4()
+        row = (
+            self._session.execute(
+                text(
+                    f"""
+                insert into public.processing_jobs
+                    (id, user_id, job_type, status, {target_column}, deadline_at)
+                values
+                    (:job_id, :authenticated_user_id, :job_type, 'queued',
+                     :target_id, :deadline_at)
+                returning id, job_type as type, status, progress_stage,
+                          completed_units, total_units, error_code, error_retryable,
+                          error_meta, created_at, updated_at
+                """
+                ),
+                {
+                    "job_id": job_id,
+                    "authenticated_user_id": authenticated_user_id,
+                    "job_type": job_type,
+                    "target_id": target_id,
+                    "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
+                },
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+    def enqueue(self, queue_name: str, job_id: UUID, user_id: UUID) -> None:
+        self._session.execute(
+            text("select pgmq.send(:queue_name, cast(:payload as jsonb))"),
+            {
+                "queue_name": queue_name,
+                "payload": json.dumps({"job_id": str(job_id), "user_id": str(user_id)}),
+            },
+        )
+
+    def get_message(self, authenticated_user_id: UUID, message_id: UUID) -> dict[str, Any] | None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                select m.id, m.room_id, m.sequence_no, m.sender_type, m.content,
+                       m.input_mode, m.delivery_status, m.reply_to_message_id,
+                       m.created_at, m.updated_at
+                from public.room_messages m
+                join public.practice_rooms r on r.id = m.room_id
+                where m.id = :message_id and r.user_id = :authenticated_user_id
+                """
+                ),
+                {"message_id": message_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
+    def get_job(self, authenticated_user_id: UUID, job_id: UUID) -> dict[str, Any] | None:
+        row = (
+            self._session.execute(
+                text(
+                    """
+                select id, job_type as type, status, progress_stage, completed_units,
+                       total_units, error_code, error_retryable, error_meta,
+                       created_at, updated_at
+                from public.processing_jobs
+                where id = :job_id and user_id = :authenticated_user_id
+                """
+                ),
+                {"job_id": job_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
+    def retry_response(
+        self,
+        authenticated_user_id: UUID,
+        message_id: UUID,
+        deadline_seconds: int,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        target = (
+            self._session.execute(
+                text(
+                    """
+                select a.id, a.processing_status
+                from public.message_ai_processing a
+                join public.room_messages m on m.id = a.message_id
+                join public.practice_rooms r on r.id = m.room_id
+                where m.id = :message_id and r.user_id = :authenticated_user_id
+                for update of a
+                """
+                ),
+                {"message_id": message_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if target is None:
+            return None
+        if target["processing_status"] != "failed":
+            raise RuntimeError("response is not retryable")
+
+        active_job = self._session.execute(
+            text(
+                """
+                select 1 from public.processing_jobs
+                where message_ai_processing_id = :target_id
+                  and status in ('queued', 'processing')
+                """
+            ),
+            {"target_id": target["id"]},
+        ).first()
+        if active_job is not None:
+            raise RuntimeError("response already has an active job")
+
+        self._session.execute(
+            text(
+                """
+                update public.message_ai_processing
+                set processing_status = 'processing', processing_token = gen_random_uuid(),
+                    error_code = null, error_message = null, completed_at = null,
+                    deadline_at = :deadline_at, next_attempt_at = null,
+                    updated_at = now()
+                where id = :target_id
+                """
+            ),
+            {
+                "target_id": target["id"],
+                "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
+            },
+        )
+        job = self.insert_job(
+            authenticated_user_id,
+            "conversation_text",
+            "message_ai_processing_id",
+            target["id"],
+            deadline_seconds,
+        )
+        self.enqueue("conversation_text", job["id"], authenticated_user_id)
+        message = self.get_message(authenticated_user_id, message_id)
+        if message is None:
+            raise LookupError("message disappeared")
+        return message, job
+
+    def commit(self) -> None:
+        self._session.commit()

@@ -2,7 +2,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_DIR = ROOT / "supabase" / "migrations"
 
@@ -10,26 +9,27 @@ MIGRATION_DIR = ROOT / "supabase" / "migrations"
 class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.migration_paths = sorted(MIGRATION_DIR.glob("*.sql"))
         cls.sql = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted(MIGRATION_DIR.glob("*.sql"))
+            path.read_text(encoding="utf-8") for path in cls.migration_paths
         ).lower()
+        cls.latest_sql = cls.migration_paths[-1].read_text(encoding="utf-8").lower()
 
     def assert_sql(self, pattern: str):
         self.assertRegex(self.sql, re.compile(pattern, re.S | re.I))
 
     def test_db01_message_idempotency_and_sequence_uniqueness(self):
-        self.assert_sql(r"add column if not exists client_request_id uuid")
+        self.assertIn("client_request_id uuid", self.sql)
         self.assert_sql(r"unique\s*\(room_id,\s*client_request_id\)")
         self.assert_sql(r"unique\s*\(room_id,\s*sequence_no\)")
 
     def test_db02_single_ai_reply_per_user_message(self):
-        self.assert_sql(r"add column if not exists reply_to_message_id uuid")
+        self.assertIn("reply_to_message_id uuid", self.sql)
         self.assert_sql(r"unique\s*\(reply_to_message_id\)")
 
     def test_db03_independent_processing_records(self):
         for table in ("message_ai_processing", "message_emotion_analysis"):
-            self.assertIn(f"create table if not exists public.{table}", self.sql)
+            self.assert_sql(rf"create table(?: if not exists)? public\.{table}")
         self.assert_sql(r"processing_status.*check.*processing.*succeeded.*failed")
 
     def test_db04_emotion_enum_contract(self):
@@ -42,28 +42,36 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
         self.assert_sql(r"unique\s*\(feedback_id,\s*category\)")
         for category in ("honorifics", "courtesy", "context_fit", "naturalness"):
             self.assertIn(f"'{category}'", self.sql)
+        self.assertNotRegex(
+            self.latest_sql,
+            re.compile(r"category in\s*\([^)]*'consideration'", re.S),
+        )
 
     def test_db06_scenario_success_conditions(self):
-        self.assertIn("create table if not exists public.scenario_success_conditions", self.sql)
-        self.assertIn("create table if not exists public.room_success_condition_progress", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.scenario_success_conditions")
+        self.assert_sql(r"create table(?: if not exists)? public\.room_success_condition_progress")
 
     def test_db07_interview_document_version_and_analysis(self):
-        for column in ("version_no", "is_current", "upload_status", "analysis_status", "deleted_at"):
+        for column in (
+            "version_no",
+            "is_current",
+            "upload_status",
+            "analysis_status",
+            "deleted_at",
+        ):
             self.assertIn(column, self.sql)
-        self.assertIn("create table if not exists public.interview_document_analyses", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.interview_document_analyses")
 
     def test_db08_results_are_independent_snapshots(self):
-        self.assert_sql(r"alter table public.session_results\s+add column if not exists user_id uuid")
+        self.assert_sql(r"create table public\.session_results.*user_id uuid not null")
         self.assertIn("source_snapshot", self.sql)
         self.assertIn("on delete set null", self.sql)
 
     def test_db08_room_reference_is_nullable_after_room_deletion(self):
-        self.assert_sql(r"alter table public.session_results\s+alter column room_id drop not null")
+        self.assert_sql(r"create table public\.session_results\s*\(.*room_id uuid,")
 
     def test_db08_result_rls_uses_snapshot_owner(self):
-        self.assertIn("drop policy if exists session_results_own_room", self.sql)
         self.assert_sql(r"create policy session_results_own_user.*user_id\s*=\s*auth\.uid\(\)")
-        self.assertIn("drop policy if exists result_items_own_result", self.sql)
         self.assertIn("create policy result_items_own_user_result", self.sql)
 
     def test_db09_rls_is_enabled_for_new_user_tables(self):
@@ -79,12 +87,12 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
             self.assertIn(f"alter table public.{table} enable row level security", self.sql)
 
     def test_db10_storage_deletion_queue(self):
-        self.assertIn("create table if not exists public.storage_deletion_jobs", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.storage_deletion_jobs")
         self.assertIn("storage_path", self.sql)
         self.assertIn("attempt_count", self.sql)
 
     def test_db11_private_room_context(self):
-        self.assertIn("create table if not exists public.room_contexts", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.room_contexts")
         self.assertIn("summary_text", self.sql)
         self.assertIn("summarized_through_message_id", self.sql)
 
@@ -103,7 +111,7 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
             "interview_questions",
             "interview_answers",
         ):
-            self.assertIn(f"create table if not exists public.{table}", self.sql)
+            self.assert_sql(rf"create table(?: if not exists)? public\.{table}")
         self.assert_sql(r"unique\s*\(setup_id,\s*version_no\)")
         self.assert_sql(r"unique\s*\(setup_id,\s*idempotency_key\)")
         self.assert_sql(r"unique\s*\(configuration_id,\s*sequence_no\)")
@@ -125,16 +133,16 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
         self.assertIn("recalculate_turn_feedback_overall_score", self.sql)
         self.assertIn("feedback_scores_recalculate_overall_trigger", self.sql)
         self.assertIn("validate_feedback_emotion_limit", self.sql)
-        self.assert_sql(r"percentage.*between 0 and 100")
-        self.assert_sql(r"sort_order.*between 1 and 3")
+        self.assert_sql(r"percentage.*>=\s*0.*percentage.*<=\s*100")
+        self.assert_sql(r"sort_order.*>=\s*1.*sort_order.*<=\s*3")
         self.assert_sql(r"unique\s*\(feedback_id,\s*emotion_label\)")
 
     def test_p4_profile_and_required_consent_contract(self):
-        self.assertIn("create table if not exists public.consent_policies", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.consent_policies")
         self.assertIn("validate_profile_onboarding_completion", self.sql)
         self.assertIn("btrim(display_name)", self.sql)
         self.assertIn("birth_date <= current_date", self.sql)
-        self.assertIn("display_language in ('ko', 'en')", self.sql)
+        self.assert_sql(r"display_language.*'ko'.*'en'")
 
     def test_p5_partial_unique_room_indexes(self):
         for index in (
@@ -157,7 +165,7 @@ class ScreenPlanDatabaseMigrationContract(unittest.TestCase):
         self.assertIn("storage_deletion_jobs_claim_idx", self.sql)
 
     def test_p6_processing_timeout_contract(self):
-        self.assertIn("create table if not exists public.processing_timeout_policies", self.sql)
+        self.assert_sql(r"create table(?: if not exists)? public\.processing_timeout_policies")
         for column in ("processing_token", "deadline_at", "next_attempt_at"):
             self.assertIn(column, self.sql)
         for index in (

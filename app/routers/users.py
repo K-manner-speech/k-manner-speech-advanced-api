@@ -1,0 +1,71 @@
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header
+from sqlalchemy.orm import Session
+
+from app.core.auth import AuthenticatedUser, get_authenticated_user
+from app.core.dependencies import get_session
+from app.repositories.users import UserRepository
+from app.schemas.profile import (
+    LanguageReplaceRequest,
+    MeResponse,
+    ProfileReplaceRequest,
+    TermsReplaceRequest,
+)
+from app.services.users import SqlUserService, UserService
+
+router = APIRouter(tags=["user"])
+
+
+def get_user_service(session: Annotated[Session, Depends(get_session)]) -> UserService:
+    return SqlUserService(UserRepository(session))
+
+
+@router.get("/me", operation_id="me.get", response_model=MeResponse)
+def get_me(
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[UserService, Depends(get_user_service)],
+) -> MeResponse:
+    return service.get_me(user.id)
+
+
+@router.put("/me/profile", operation_id="me_profile.replace", response_model=MeResponse)
+def replace_profile(
+    request: ProfileReplaceRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[UserService, Depends(get_user_service)],
+) -> MeResponse:
+    return service.replace_profile(user.id, request)
+
+
+@router.put("/me/language", operation_id="me_language.replace", response_model=MeResponse)
+def replace_language(
+    request: LanguageReplaceRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[UserService, Depends(get_user_service)],
+) -> MeResponse:
+    return service.replace_language(user.id, request)
+
+
+@router.put("/me/terms", operation_id="me_terms.replace", response_model=MeResponse)
+def replace_terms(
+    request: TermsReplaceRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[UserService, Depends(get_user_service)],
+) -> MeResponse:
+    return service.replace_terms(user.id, request)
+
+
+@router.post(
+    "/me/onboarding/complete",
+    operation_id="onboarding.complete",
+    response_model=MeResponse,
+)
+def complete_onboarding(
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[UserService, Depends(get_user_service)],
+    idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
+) -> MeResponse:
+    del idempotency_key
+    return service.complete_onboarding(user.id)

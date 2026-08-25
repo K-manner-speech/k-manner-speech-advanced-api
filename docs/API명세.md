@@ -117,7 +117,7 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | operationId | Method/path | Auth | Idem | Request | Success | Errors | Owner/Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `health.live` | `GET /api/v1/health/live` | 없음 | - | 없음 | `200 HealthLive` | 500 | process 생존만; 사용자 데이터 없음 |
-| `health.ready` | `GET /api/v1/health/ready` | 없음 | - | 없음 | `200 HealthReady` | 503 | DB, pgmq queues/extensions, 필수 timeout policy 7종, config, worker heartbeat를 검증한다. Provider live call은 금지한다. |
+| `health.ready` | `GET /api/v1/health/ready` | 없음 | - | 없음 | `200 HealthReady` | 503 | DB, pgmq queues/extensions, 필수 timeout policy 7종, config, 필수 queue별 TTL 이내 worker heartbeat를 검증한다. Provider live call은 금지한다. |
 
 ### 4.2 Profile·onboarding·account
 
@@ -161,11 +161,12 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `message_feedback.get` | `GET /api/v1/messages/{message_id}/feedback` | Bearer | - | path | `200 FeedbackResponse` | 401,404 | message→room owner; partial 허용 |
 | `message_feedback.retry` | `POST /api/v1/messages/{message_id}/feedback/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 feedback row, 새 Job |
+| `message_emotion.retry` | `POST /api/v1/messages/{message_id}/emotion/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | message→room owner와 retryable `failed` 상태를 검증하고 같은 emotion analysis row에 새 Job을 연결한다. |
 | `message_tts.retry` | `POST /api/v1/messages/{message_id}/tts/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 audio logical target, 성공 연결 후 구 object 삭제 |
 | `message_audio.get` | `GET /api/v1/messages/{message_id}/audio` | Bearer | - | path | `200 AudioAccessResponse` | 401,404,409 | current metadata·object prefix 재검증 후 short signed URL; URL 저장/log 금지 |
 | `message_repeat.create` | `POST /api/v1/messages/{message_id}/repeat` | Bearer | 필수 | `RepeatRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | 추천 표현/허용 상태 판정 후 새 연습 message와 Job |
 
-감정 결과는 `Message.emotion` 또는 `FeedbackResponse.emotions`로 조회하며 별도 write API는 없다.
+감정 결과는 `Message.emotion` 또는 `FeedbackResponse.emotions`로 조회하며 결과값을 직접 수정하는 API는 없다. 감정 분석 재시도는 `message_emotion.retry`만 사용한다. Service는 기존 `message_emotion_analysis` 행을 `processing`으로 전이하고 새 Job과 새 `processing_token`을 연결한다. 이전 처리 토큰의 늦은 결과는 현재 토큰과 일치하지 않으면 저장하지 않는다. `processing|succeeded` 상태, retry 불가능한 오류 또는 기존 유효 Job이 있으면 `409`다.
 
 ### 4.6 Jobs·results
 
@@ -188,11 +189,13 @@ Room이 `completed|failed`로 종료될 때 Service가 단일 `session_result` p
 | `interview_document.list` | `GET /api/v1/interview-documents` | Bearer | - | cursor,limit,document_type | `200 Page[InterviewDocument]` | 401,422 | owner/current/version scope |
 | `interview_document.get` | `GET /api/v1/interview-documents/{document_id}` | Bearer | - | path | `200 InterviewDocument` | 401,404 | direct owner |
 | `interview_document.analyze` | `POST /api/v1/interview-documents/{document_id}/analyze` | Bearer | 필수 | 빈 object | `202 AnalysisAccepted` | 401,404,409,422,429,503 | current/version/text threshold; parse fail은 queue 금지 |
-| `interview_document.replace` | `POST /api/v1/interview-documents/{document_id}/replace` | Bearer | 필수 | `multipart DocumentUploadRequest` | `201 InterviewDocument` | 401,404,409,413,415,422,503 | 새 version 확정, old job cancel/vector/object cleanup |
-| `interview_document.delete` | `DELETE /api/v1/interview-documents/{document_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | analysis/config 참조 lifecycle 정리 후 DB/vector/object 삭제 |
+| `interview_document.replace` | `POST /api/v1/interview-documents/{document_id}/replace` | Bearer | 필수 | `multipart DocumentUploadRequest` | `201 InterviewDocument` | 401,404,409,413,415,422,503 | 새 version 확정, old job cancel, 이전 문서 논리 삭제, Storage 원본·해당 vector 정리, 완료된 분석 보존 |
+| `interview_document.delete` | `DELETE /api/v1/interview-documents/{document_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | 문서 row를 `is_current=false`, `deleted_at=now()`로 논리 삭제하고 Storage 원본과 해당 vector를 삭제하되 완료된 분석은 보존한다. 진행 중 Job은 cancel하고 미시작 configuration은 `invalidated`로 전이한다. |
 | `interview_analysis.get` | `GET /api/v1/interview-analyses/{analysis_id}` | Bearer | - | path | `200 InterviewAnalysis` | 401,404 | analysis user + document owner/version |
 
 OCR은 MVP에 없다. 스캔 PDF 또는 text threshold 미달은 `422 DOCUMENT_TEXT_NOT_EXTRACTABLE`이며 분석 Job을 만들지 않는다. 문서 원문은 응답하지 않는다.
+
+삭제된 원본을 참조하는 보존된 분석은 과거 결과 조회에만 사용하고 새 분석 또는 면접 구성의 입력으로 사용하지 않는다. 해당 원본으로 아직 시작하지 않은 configuration은 `invalidated`다. 삭제된 원본의 `Storage path` 또는 `signed URL`은 어떤 분석·문서 응답에도 제공하지 않는다. 회원 탈퇴는 예외로 사용자 소유 문서 row, 완료된 분석, vector와 Storage object를 모두 영구 삭제한다.
 
 ### 4.8 Interview configuration·questions·practice
 
@@ -283,7 +286,7 @@ Configuration generation은 Supabase pgvector에서 owner/document/version metad
 | Onboarding | incomplete → completed | complete endpoint만 server validation 후 전이 |
 | Room | created/in_progress → completed 또는 failed | Service가 turn/성공조건/면접질문 판정; 종료 시 result record+Job 자동 생성 |
 | Job | queued→processing; processing→queued/succeeded/failed/cancelled | Worker가 domain 상태와 한 transaction에서 전이; terminal immutable |
-| AI/emotion/document | processing→succeeded/failed | Job 성공/실패와 동기화 |
+| AI/emotion/document | processing→succeeded/failed; retryable failed→processing | Job 성공/실패와 동기화하며 API retry는 기존 domain row+새 Job·처리 토큰을 사용 |
 | Audio | processing→ready/failed | ready 연결 확정 뒤 old object 삭제 |
 | Feedback | processing→ready/partial/failed | 가능한 부분 결과 보존 |
 | Configuration | processing→ready→in_progress→completed; failed/invalidated | generation/regeneration과 room 생성을 server가 판정 |
@@ -319,7 +322,7 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 - Browser의 app table/queue 직접 CRUD, 공개 Storage URL, raw path/type assertion, service role 노출은 금지한다.
 - OAuth/account linking, OCR, ClamAV, Redis/Celery, SSE/WebSocket, generic cancel API, admin API는 MVP 범위 밖이다.
 - Cloud 배포·운영은 범위 밖이며 React/FastAPI/Python worker의 로컬 실행과 원격 Supabase/Gemini/OpenAI만 전제한다.
-- 측정 전 임의 숫자를 만들지 않는다: pagination limit, user queue limit, worker concurrency, RAG threshold, context summary trigger, idempotency lease/retention. `session_result_generation`은 확정된 60초 deadline·최대 3회 시도를 사용한다.
+- 측정 전 임의 숫자를 만들지 않는다: pagination limit, user queue limit, worker concurrency, RAG threshold, context summary trigger, document minimum text chars, worker heartbeat TTL, idempotency lease/retention. 모두 기본값 없는 필수 환경변수다. `session_result_generation`은 확정된 60초 deadline·최대 3회 시도를 사용한다.
 
 ## 10. 근거 추적표
 
@@ -336,7 +339,7 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 ## 11. 자체 검수
 
 - [x] `/api/v1`, Bearer, error envelope, idempotency, cursor 계약 포함
-- [x] Health, onboarding, catalog, rooms/messages, retry, feedback/audio, jobs/results, documents/analysis, configuration/questions/practice, account deletion 포함
+- [x] Health, onboarding, catalog, rooms/messages, 감정·피드백·TTS retry, jobs/results, documents/analysis, configuration/questions/practice, account deletion 포함
 - [x] 모든 endpoint에 operationId, method/path, auth, request/response, status/error, owner chain 기재
 - [x] 7종 Job과 stage/error/result_resource, 2초 polling, 자동 result 생성 포함
 - [x] `processing_jobs`와 `idempotency_records`의 최신 ERD 계약 반영
