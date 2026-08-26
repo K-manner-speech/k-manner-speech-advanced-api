@@ -7,8 +7,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.core.errors import ApiError
 from app.repositories.catalog import CatalogRepository
-from app.schemas.rooms import RoomCreateRequest
+from app.repositories.conversation import ConversationRepository
+from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
 from app.services.catalog import SqlCatalogService
 from app.services.conversation import SqlConversationService
 
@@ -51,7 +53,7 @@ class CatalogRepositoryStub:
 def test_scenario_list_rejects_unknown_persona() -> None:
     service = SqlCatalogService(CatalogRepositoryStub(), maximum_limit=20)  # type: ignore[arg-type]
 
-    with pytest.raises(Exception) as raised:
+    with pytest.raises(ApiError) as raised:
         service.list_scenarios(None, 10, uuid4())
 
     error = raised.value
@@ -112,3 +114,35 @@ def test_room_is_validated_before_commit() -> None:
         pytest.fail("AC-T2-ROOM-CREATE-ATOMIC")
 
     assert repository.committed is False, "AC-T2-ROOM-CREATE-ATOMIC"
+
+
+def test_room_list_casts_nullable_text_filters() -> None:
+    session = SqlCapturingSession()
+    repository = ConversationRepository(session)  # type: ignore[arg-type]
+
+    assert repository.list_rooms(uuid4(), 20, "in_progress", "free_chat") == []
+    assert "cast(:status as text) is null" in session.statement
+    assert "status = cast(:status as text)" in session.statement
+    assert "cast(:practice_type as text) is null" in session.statement
+    assert "practice_type = cast(:practice_type as text)" in session.statement
+
+
+class MessageRepositoryMustNotRun:
+    def create_message_and_job(self, *_args: object, **_kwargs: object) -> None:
+        raise AssertionError("repository must not run for mismatched request identifiers")
+
+
+def test_message_rejects_mismatched_client_request_id_as_api_error() -> None:
+    service = SqlConversationService(MessageRepositoryMustNotRun(), 20, 4)  # type: ignore[arg-type]
+    request = MessageCreateRequest(
+        content="안녕하세요",
+        input_mode="text",
+        client_request_id=uuid4(),
+    )
+
+    with pytest.raises(Exception) as raised:
+        service.create_message(uuid4(), uuid4(), request, uuid4())
+
+    error = raised.value
+    assert getattr(error, "status_code", None) == 422
+    assert getattr(error, "code", None) == "CLIENT_REQUEST_ID_MISMATCH"

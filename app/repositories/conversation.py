@@ -124,8 +124,14 @@ class ConversationRepository:
                        turn_count, ended_reason, started_at, completed_at, updated_at
                 from public.practice_rooms
                 where user_id = :authenticated_user_id
-                  and (:status is null or status = :status)
-                  and (:practice_type is null or practice_type = :practice_type)
+                  and (
+                    cast(:status as text) is null
+                    or status = cast(:status as text)
+                  )
+                  and (
+                    cast(:practice_type as text) is null
+                    or practice_type = cast(:practice_type as text)
+                  )
                 order by updated_at desc, id desc
                 limit :limit
                 """

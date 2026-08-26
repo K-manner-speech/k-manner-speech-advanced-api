@@ -131,7 +131,14 @@ class SqlConversationService:
     def create_message(
         self, user_id: UUID, room_id: UUID, request: MessageCreateRequest, idempotency_key: UUID
     ) -> MessageAccepted:
-        validate_client_request_id(request.client_request_id, idempotency_key)
+        try:
+            validate_client_request_id(request.client_request_id, idempotency_key)
+        except ValueError as error:
+            raise ApiError(
+                422,
+                "CLIENT_REQUEST_ID_MISMATCH",
+                "client_request_id는 Idempotency-Key와 같아야 합니다.",
+            ) from error
         policy = get_job_execution_policy("conversation_text")
         try:
             message_row, job_row = self._repository.create_message_and_job(
