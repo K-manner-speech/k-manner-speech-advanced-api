@@ -33,6 +33,7 @@ def complete_settings() -> dict[str, object]:
         "pagination_limit": 20,
         "user_queue_limit": 4,
         "worker_concurrency": 2,
+        "worker_visibility_timeout_seconds": 65,
         "rag_similarity_threshold": 0.7,
         "context_summary_trigger_tokens": 4000,
         "document_min_text_chars": 100,
@@ -73,6 +74,22 @@ def test_settings_require_every_value_without_defaults(
 def test_cors_rejects_non_origin_values(invalid_origin: str) -> None:
     values = complete_settings()
     values["cors_allowed_origins"] = [invalid_origin]
+
+    with pytest.raises(ValidationError):
+        AppSettings(_env_file=None, **values)
+
+
+def test_embedding_model_is_fixed_by_architecture_contract() -> None:
+    values = complete_settings()
+    values["openai_embedding_model"] = "gpt-5.6-luna"
+
+    with pytest.raises(ValidationError):
+        AppSettings(_env_file=None, **values)
+
+
+def test_worker_visibility_must_outlive_longest_job_deadline() -> None:
+    values = complete_settings()
+    values["worker_visibility_timeout_seconds"] = 60
 
     with pytest.raises(ValidationError):
         AppSettings(_env_file=None, **values)

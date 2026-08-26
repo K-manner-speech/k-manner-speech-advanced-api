@@ -19,7 +19,8 @@ class ResultRepository:
             self._session.execute(
                 text("""
                 select s.id, s.attempt_no, s.result_status as status,
-                       s.missing_categories, s.created_at
+                       s.missing_categories, s.created_at, s.overall_score,
+                       s.summary, s.interview_setup_snapshot
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.room_id = :room_id and r.user_id = :user_id
@@ -37,7 +38,8 @@ class ResultRepository:
             self._session.execute(
                 text("""
                 select id, attempt_no, result_status as status,
-                       missing_categories, created_at
+                       missing_categories, created_at, overall_score,
+                       summary, interview_setup_snapshot
                 from public.session_results
                 where id = :result_id and user_id = :user_id
             """),
@@ -148,4 +150,41 @@ class ResultRepository:
             """),
             {"result_id": row["id"]},
         ).mappings()
-        return {**dict(row), "items": [dict(item) for item in items], "source_refs": []}
+        result = dict(row)
+        interview_evaluation = None
+        if result.pop("interview_setup_snapshot", None) is not None:
+            score_rows = list(
+                self._session.execute(
+                    text(
+                        """
+                        select category, score, 20 as max_score,
+                               strength_text as strength,
+                               suggestion_text as suggestion,
+                               evidence_text as evidence
+                        from public.interview_evaluation_scores
+                        where result_id = :result_id
+                        order by category
+                        """
+                    ),
+                    {"result_id": result["id"]},
+                ).mappings()
+            )
+            interview_evaluation = {
+                "status": result["status"],
+                "overall_score": int(result["overall_score"])
+                if result["overall_score"] is not None
+                else None,
+                "summary": result["summary"],
+                "scores": [
+                    {**dict(score), "score": int(score["score"])} for score in score_rows
+                ],
+                "missing_categories": result["missing_categories"],
+            }
+        if result["overall_score"] is not None:
+            result["overall_score"] = int(result["overall_score"])
+        return {
+            **result,
+            "items": [dict(item) for item in items],
+            "source_refs": [],
+            "interview_evaluation": interview_evaluation,
+        }

@@ -37,7 +37,14 @@ def test_provider_validates_analysis_and_question_contracts() -> None:
                         "text": "FastAPI 프로젝트에서 맡은 역할을 설명해 주세요.",
                         "type": "required",
                         "required": True,
-                        "source_refs": [{"section": "experience"}],
+                        "source_refs": [
+                            {
+                                "section": "experience",
+                                "chunk_id": None,
+                                "document_id": None,
+                                "evidence": None,
+                            }
+                        ],
                         "evaluation_focus": ["역할", "기여도"],
                     },
                     {
@@ -45,7 +52,14 @@ def test_provider_validates_analysis_and_question_contracts() -> None:
                         "text": "PostgreSQL 성능 문제를 해결한 경험이 있나요?",
                         "type": "required",
                         "required": True,
-                        "source_refs": [{"section": "skills"}],
+                        "source_refs": [
+                            {
+                                "section": "skills",
+                                "chunk_id": None,
+                                "document_id": None,
+                                "evidence": None,
+                            }
+                        ],
                         "evaluation_focus": ["문제 해결"],
                     },
                 ]
@@ -95,7 +109,14 @@ def test_question_request_serializes_database_uuid(monkeypatch: pytest.MonkeyPat
                         "text": "경험을 설명해 주세요.",
                         "type": "required",
                         "required": True,
-                        "source_refs": [{"section": "experience"}],
+                        "source_refs": [
+                            {
+                                "section": "experience",
+                                "chunk_id": None,
+                                "document_id": None,
+                                "evidence": None,
+                            }
+                        ],
                         "evaluation_focus": ["구체성"],
                     }
                 ]

@@ -1,11 +1,37 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
+
+from pydantic import Field, StrictInt
 
 from app.schemas.base import ContractModel
 from app.schemas.common import DomainRef
 
 ResultStatus = Literal["processing", "partial", "succeeded", "failed"]
+InterviewEvaluationCategory = Literal[
+    "question_understanding_fit",
+    "answer_structure",
+    "specificity_evidence",
+    "job_fit_problem_solving",
+    "delivery_attitude",
+]
+
+
+class InterviewEvaluationScoreResponse(ContractModel):
+    category: InterviewEvaluationCategory
+    score: Annotated[StrictInt, Field(ge=1, le=20)]
+    max_score: Literal[20]
+    strength: str | None
+    suggestion: str | None
+    evidence: str | None
+
+
+class InterviewEvaluationResponse(ContractModel):
+    status: ResultStatus
+    overall_score: Annotated[StrictInt, Field(ge=5, le=100)] | None
+    summary: str | None
+    scores: list[InterviewEvaluationScoreResponse]
+    missing_categories: list[InterviewEvaluationCategory]
 
 
 class SessionResultSummary(ContractModel):
@@ -31,3 +57,6 @@ class ResultItem(ContractModel):
 class SessionResult(SessionResultSummary):
     items: list[ResultItem]
     source_refs: list[DomainRef]
+    overall_score: int | None = None
+    summary: str | None = None
+    interview_evaluation: InterviewEvaluationResponse | None = None

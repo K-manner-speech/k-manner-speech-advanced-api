@@ -12,7 +12,7 @@ from app.schemas.common import DomainRef, JobRef
 from app.schemas.feedback import FeedbackResponse
 from app.schemas.jobs import DomainJobAccepted
 from app.services.feedback import FeedbackService
-from tests.integration.test_auth_and_errors import StubTokenVerifier
+from tests.integration.test_auth_and_errors import ActiveSessionValidator, StubTokenVerifier
 
 USER_ID = uuid4()
 MESSAGE_ID = uuid4()
@@ -53,11 +53,14 @@ def client() -> TestClient:
     verifier = StubTokenVerifier(
         TokenClaims(
             sub=str(USER_ID),
+            session_id=uuid4(),
             issuer="https://project.supabase.co/auth/v1",
             audience="authenticated",
         )
     )
-    application = create_app(token_verifier=verifier)
+    application = create_app(
+        token_verifier=verifier, session_validator=ActiveSessionValidator()
+    )
     application.dependency_overrides[get_feedback_service] = lambda: StubFeedbackService()
     return TestClient(application)
 

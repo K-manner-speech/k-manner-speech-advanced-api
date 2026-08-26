@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.core.auth import (
     AuthenticatedUser,
     JwksTokenVerifier,
+    SessionValidator,
     TokenClaims,
     TokenVerifier,
     get_authenticated_user,
@@ -32,7 +33,25 @@ class StubTokenVerifier(TokenVerifier):
         return self.claims
 
 
-def protected_client(verifier: TokenVerifier) -> TestClient:
+class ActiveSessionValidator(SessionValidator):
+    def __init__(self, *, active: bool = True) -> None:
+        self.active = active
+        self.calls: list[tuple[UUID, UUID, bool]] = []
+
+    def validate(
+        self,
+        user_id: UUID,
+        session_id: UUID,
+        *,
+        allow_account_deletion_in_progress: bool = False,
+    ) -> bool:
+        self.calls.append((user_id, session_id, allow_account_deletion_in_progress))
+        return self.active
+
+
+def protected_client(
+    verifier: TokenVerifier, session_validator: SessionValidator | None = None
+) -> TestClient:
     router = APIRouter()
 
     @router.get("/protected")
@@ -41,7 +60,10 @@ def protected_client(verifier: TokenVerifier) -> TestClient:
     ) -> dict[str, str]:
         return {"user_id": str(user.id)}
 
-    app = create_app(token_verifier=verifier)
+    app = create_app(
+        token_verifier=verifier,
+        session_validator=session_validator or ActiveSessionValidator(),
+    )
     app.include_router(router)
     return TestClient(app)
 
@@ -60,15 +82,18 @@ def test_missing_bearer_returns_safe_401_envelope() -> None:
 
 def test_verified_uuid_subject_is_the_only_authenticated_identity() -> None:
     user_id = uuid4()
+    session_id = uuid4()
+    session_validator = ActiveSessionValidator()
     verifier = StubTokenVerifier(
         TokenClaims(
             sub=str(user_id),
+            session_id=session_id,
             issuer="https://project.supabase.co/auth/v1",
             audience="authenticated",
             user_metadata={"user_id": str(uuid4()), "role": "admin"},
         )
     )
-    client = protected_client(verifier)
+    client = protected_client(verifier, session_validator)
 
     response = client.get(
         "/protected",
@@ -78,6 +103,25 @@ def test_verified_uuid_subject_is_the_only_authenticated_identity() -> None:
     assert response.status_code == 200
     assert response.json() == {"user_id": str(user_id)}
     assert verifier.received_token == "signed-token"
+    assert session_validator.calls == [(user_id, session_id, False)]
+
+
+def test_revoked_session_is_rejected_even_when_jwt_signature_is_valid() -> None:
+    verifier = StubTokenVerifier(
+        TokenClaims(
+            sub=str(uuid4()),
+            session_id=uuid4(),
+            issuer="https://project.supabase.co/auth/v1",
+            audience="authenticated",
+        )
+    )
+
+    response = protected_client(
+        verifier, ActiveSessionValidator(active=False)
+    ).get("/protected", headers={"Authorization": "Bearer signed-token"})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "INVALID_AUTH_SESSION"
 
 
 def test_non_uuid_subject_is_rejected() -> None:

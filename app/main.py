@@ -4,8 +4,11 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.core.auth import (
     JwksTokenVerifier,
+    SessionValidator,
     TokenVerifier,
+    UnconfiguredSessionValidator,
     UnconfiguredTokenVerifier,
+    get_session_validator,
     get_token_verifier,
 )
 from app.core.config import AppSettings
@@ -18,6 +21,7 @@ from app.routers import catalog, conversation, feedback, health, interviews, med
 def create_app(
     readiness_checker: ReadinessChecker | None = None,
     token_verifier: TokenVerifier | None = None,
+    session_validator: SessionValidator | None = None,
     settings: AppSettings | None = None,
 ) -> FastAPI:
     application = FastAPI(title="K-Manner Speech API", version="0.1.0")
@@ -53,6 +57,13 @@ def create_app(
     else:
         configured_verifier = UnconfiguredTokenVerifier()
     application.dependency_overrides[get_token_verifier] = lambda: configured_verifier
+    if session_validator is not None:
+        application.dependency_overrides[get_session_validator] = lambda: session_validator
+    elif settings is None:
+        unconfigured_session_validator = UnconfiguredSessionValidator()
+        application.dependency_overrides[get_session_validator] = (
+            lambda: unconfigured_session_validator
+        )
     return application
 
 

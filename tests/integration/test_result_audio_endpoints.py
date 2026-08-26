@@ -13,7 +13,7 @@ from app.routers.results import get_result_service
 from app.schemas.jobs import DomainJobAccepted
 from app.schemas.media import AudioAccessResponse
 from app.schemas.results import SessionResult
-from tests.integration.test_auth_and_errors import StubTokenVerifier
+from tests.integration.test_auth_and_errors import ActiveSessionValidator, StubTokenVerifier
 
 
 class StubMediaService:
@@ -68,10 +68,12 @@ def test_audio_and_result_routes_use_safe_response_models() -> None:
         token_verifier=StubTokenVerifier(
             TokenClaims(
                 sub=str(user_id),
+                session_id=uuid4(),
                 issuer="https://project.supabase.co/auth/v1",
                 audience="authenticated",
             )
-        )
+        ),
+        session_validator=ActiveSessionValidator(),
     )
     app.dependency_overrides[get_media_service] = lambda: StubMediaService()
     app.dependency_overrides[get_result_service] = lambda: StubResultService()

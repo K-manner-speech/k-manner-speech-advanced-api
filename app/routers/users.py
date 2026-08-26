@@ -1,11 +1,19 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Response
 from sqlalchemy.orm import Session
 
-from app.core.auth import AuthenticatedUser, get_authenticated_user
-from app.core.dependencies import get_session
+from app.adapters.account_auth import SupabaseAccountAuthGateway
+from app.adapters.storage import SupabaseStorageSigner
+from app.core.auth import (
+    AuthenticatedUser,
+    get_account_deletion_user,
+    get_authenticated_user,
+)
+from app.core.config import AppSettings
+from app.core.dependencies import get_session, get_settings
+from app.repositories.account import AccountDeletionRepository
 from app.repositories.users import UserRepository
 from app.schemas.profile import (
     LanguageReplaceRequest,
@@ -13,6 +21,8 @@ from app.schemas.profile import (
     ProfileReplaceRequest,
     TermsReplaceRequest,
 )
+from app.services.account import AccountDeletionService, SqlAccountDeletionService
+from app.services.idempotency import IdempotencyRepository
 from app.services.users import SqlUserService, UserService
 
 router = APIRouter(tags=["user"])
@@ -20,6 +30,21 @@ router = APIRouter(tags=["user"])
 
 def get_user_service(session: Annotated[Session, Depends(get_session)]) -> UserService:
     return SqlUserService(UserRepository(session))
+
+
+def get_account_deletion_service(
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> AccountDeletionService:
+    service_role_key = settings.supabase_service_role_key.get_secret_value()
+    return SqlAccountDeletionService(
+        AccountDeletionRepository(session),
+        SupabaseStorageSigner(settings.supabase_url, service_role_key),
+        SupabaseAccountAuthGateway(settings.supabase_url, service_role_key),
+        IdempotencyRepository(session),
+        settings.idempotency_lease_seconds,
+        settings.idempotency_retention_seconds,
+    )
 
 
 @router.get("/me", operation_id="me.get", response_model=MeResponse)
@@ -69,3 +94,15 @@ def complete_onboarding(
 ) -> MeResponse:
     del idempotency_key
     return service.complete_onboarding(user.id)
+
+
+@router.delete("/me", operation_id="account.delete", status_code=204)
+def delete_account(
+    user: Annotated[AuthenticatedUser, Depends(get_account_deletion_user)],
+    service: Annotated[
+        AccountDeletionService, Depends(get_account_deletion_service)
+    ],
+    idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
+) -> Response:
+    service.delete_account(user.id, user.access_token, idempotency_key)
+    return Response(status_code=204)

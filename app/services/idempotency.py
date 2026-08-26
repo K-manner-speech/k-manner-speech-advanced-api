@@ -43,7 +43,6 @@ class IdempotencyRepository:
         key: UUID,
         fingerprint: bytes,
         lease_seconds: int,
-        retention_seconds: int,
     ) -> IdempotencyClaim:
         claim_token = uuid4()
         now = datetime.now(UTC)
@@ -51,11 +50,11 @@ class IdempotencyRepository:
             text("""
                 insert into public.idempotency_records
                     (user_id, action_scope, idempotency_key, request_fingerprint,
-                     claim_token, lease_expires_at, expires_at)
+                     claim_token, lease_expires_at)
                 values
                     (:user_id, :scope, :key, :fingerprint,
-                     :claim_token, :lease_expires_at, :expires_at)
-                on conflict (user_id, action_scope, idempotency_key) do nothing
+                     :claim_token, :lease_expires_at)
+                on conflict do nothing
                 returning id
             """),
             {
@@ -65,7 +64,6 @@ class IdempotencyRepository:
                 "fingerprint": fingerprint,
                 "claim_token": claim_token,
                 "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                "expires_at": now + timedelta(seconds=retention_seconds),
             },
         ).first()
         if inserted is not None:
@@ -84,8 +82,15 @@ class IdempotencyRepository:
                 {"user_id": user_id, "scope": action_scope, "key": key},
             )
             .mappings()
-            .one()
+            .one_or_none()
         )
+        if existing is None:
+            raise ApiError(
+                409,
+                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+                "같은 작업을 처리하고 있습니다.",
+                retryable=True,
+            )
         if bytes(existing["request_fingerprint"]) != fingerprint:
             raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "다른 요청에 사용된 멱등성 키입니다.")
         if existing["state"] == "completed":
@@ -99,7 +104,7 @@ class IdempotencyRepository:
         if lease_active and not retryable_failed:
             raise ApiError(
                 409,
-                "IDEMPOTENCY_IN_PROGRESS",
+                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
                 "같은 요청을 처리하고 있습니다.",
                 retryable=True,
             )
@@ -108,7 +113,10 @@ class IdempotencyRepository:
                 update public.idempotency_records
                 set state = 'in_progress', claim_token = :claim_token,
                     lease_expires_at = :lease_expires_at, error_code = null,
-                    error_retryable = null, error_meta = null, updated_at = now()
+                    error_retryable = null, error_meta = null,
+                    response_status = null, response_body = null,
+                    response_schema_version = null, completed_at = null,
+                    expires_at = null, updated_at = now()
                 where user_id = :user_id and action_scope = :scope
                   and idempotency_key = :key
                   and (lease_expires_at <= :now or state = 'failed')
@@ -126,7 +134,7 @@ class IdempotencyRepository:
         if updated is None:
             raise ApiError(
                 409,
-                "IDEMPOTENCY_IN_PROGRESS",
+                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
                 "같은 요청을 처리하고 있습니다.",
                 retryable=True,
             )
@@ -141,14 +149,17 @@ class IdempotencyRepository:
         response_status: int,
         response_body: dict[str, Any] | None,
         response_schema_version: str,
+        retention_seconds: int,
     ) -> None:
+        now = datetime.now(UTC)
         updated = self._session.execute(
             text("""
                 update public.idempotency_records
                 set state = 'completed', response_status = :response_status,
                     response_body = cast(:response_body as jsonb),
                     response_schema_version = :schema_version,
-                    completed_at = now(), lease_expires_at = null, updated_at = now()
+                    completed_at = :completed_at, expires_at = :expires_at,
+                    claim_token = null, lease_expires_at = null, updated_at = now()
                 where user_id = :user_id and action_scope = :scope
                   and idempotency_key = :key and claim_token = :claim_token
                   and state = 'in_progress'
@@ -162,6 +173,47 @@ class IdempotencyRepository:
                 "response_status": response_status,
                 "response_body": json.dumps(response_body) if response_body is not None else None,
                 "schema_version": response_schema_version,
+                "completed_at": now,
+                "expires_at": now + timedelta(seconds=retention_seconds),
+            },
+        ).first()
+        if updated is None:
+            raise RuntimeError("idempotency claim was lost")
+
+    def fail_retryable(
+        self,
+        user_id: UUID,
+        action_scope: str,
+        key: UUID,
+        claim_token: UUID,
+        error_code: str,
+        retention_seconds: int,
+    ) -> None:
+        now = datetime.now(UTC)
+        updated = self._session.execute(
+            text(
+                """
+                update public.idempotency_records
+                set state = 'failed', claim_token = null, lease_expires_at = null,
+                    response_status = null, response_body = null,
+                    response_schema_version = null, error_code = :error_code,
+                    error_retryable = true, error_meta = null,
+                    completed_at = :completed_at, expires_at = :expires_at,
+                    updated_at = now()
+                where user_id = :user_id and action_scope = :scope
+                  and idempotency_key = :key and claim_token = :claim_token
+                  and state = 'in_progress'
+                returning id
+                """
+            ),
+            {
+                "user_id": user_id,
+                "scope": action_scope,
+                "key": key,
+                "claim_token": claim_token,
+                "error_code": error_code,
+                "completed_at": now,
+                "expires_at": now + timedelta(seconds=retention_seconds),
             },
         ).first()
         if updated is None:

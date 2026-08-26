@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -15,11 +13,8 @@ from app.adapters.interview_provider import (
     InterviewProvider,
     InterviewProviderError,
     InterviewQuestionResult,
-    OpenAIInterviewProvider,
 )
-from app.core.dependencies import get_session_factory, get_settings
 from app.schemas.common import JobStatus
-from worker.heartbeat import HeartbeatRepository
 
 QUEUE_NAME = "document_analysis"
 DLQ_NAME = "document_analysis_dlq"
@@ -442,25 +437,9 @@ class SqlDocumentAnalysisWorkerRepository:
 
 
 def main() -> None:
-    settings = get_settings()
-    session = get_session_factory()()
-    provider = OpenAIInterviewProvider(
-        settings.openai_api_key.get_secret_value(), settings.openai_interview_model
-    )
-    repository = SqlDocumentAnalysisWorkerRepository(session)
-    worker = DocumentAnalysisWorker(repository, provider, maximum_attempts=3)
-    heartbeat = HeartbeatRepository(session)
-    worker_id = f"document-analysis-{UUID(int=0)}"
-    started_at = datetime.now(UTC)
-    try:
-        while True:
-            heartbeat.record(worker_id, QUEUE_NAME, started_at)
-            if not worker.run_once():
-                time.sleep(1)
-    except KeyboardInterrupt:
-        return
-    finally:
-        session.close()
+    from worker.main import run_queue
+
+    run_queue("document_analysis")
 
 
 if __name__ == "__main__":

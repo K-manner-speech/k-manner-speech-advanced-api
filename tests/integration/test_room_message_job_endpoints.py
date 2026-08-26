@@ -13,7 +13,7 @@ from app.schemas.common import Job, JobProgress, JobRef
 from app.schemas.pagination import Page
 from app.schemas.rooms import Message, MessageAccepted, Room, RoomDetail, RoomSummary
 from app.services.conversation import ConversationService
-from tests.integration.test_auth_and_errors import StubTokenVerifier
+from tests.integration.test_auth_and_errors import ActiveSessionValidator, StubTokenVerifier
 
 USER_ID = uuid4()
 ROOM_ID = uuid4()
@@ -100,11 +100,14 @@ def client() -> TestClient:
     verifier = StubTokenVerifier(
         TokenClaims(
             sub=str(USER_ID),
+            session_id=uuid4(),
             issuer="https://project.supabase.co/auth/v1",
             audience="authenticated",
         )
     )
-    application = create_app(token_verifier=verifier)
+    application = create_app(
+        token_verifier=verifier, session_validator=ActiveSessionValidator()
+    )
     application.dependency_overrides[get_conversation_service] = lambda: StubConversationService()
     return TestClient(application)
 

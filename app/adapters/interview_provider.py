@@ -4,6 +4,7 @@ import json
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -46,6 +47,9 @@ class QuestionSourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     section: str = Field(min_length=1, max_length=100)
+    chunk_id: UUID | None
+    document_id: UUID | None
+    evidence: str | None = Field(max_length=1000)
 
 
 class GeneratedQuestion(BaseModel):

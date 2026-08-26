@@ -34,8 +34,9 @@ class SqlUserService:
             raise ApiError(404, "PROFILE_NOT_FOUND", "프로필을 찾을 수 없습니다.")
         consent_rows = self._repository.list_active_consents(user_id)
         missing = self._missing_requirements(profile, consent_rows)
+        safe_profile = {field: profile[field] for field in ProfileData.model_fields}
         return MeResponse(
-            profile=ProfileData.model_validate(profile),
+            profile=ProfileData.model_validate(safe_profile),
             display_language=profile["display_language"],
             consents=[
                 ConsentStatus(

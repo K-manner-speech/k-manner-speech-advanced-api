@@ -29,6 +29,7 @@ from app.schemas.interviews import (
 )
 from app.schemas.pagination import Page
 from app.schemas.rooms import Room
+from app.services.idempotency import IdempotencyRepository, request_fingerprint
 from app.services.jobs import get_job_execution_policy
 
 DOCUMENT_BUCKET = "interview-documents"
@@ -44,18 +45,55 @@ class SqlInterviewService:
         storage: StorageObjectStore,
         pagination_limit: int,
         document_min_text_chars: int,
+        idempotency: IdempotencyRepository,
+        idempotency_lease_seconds: int,
+        idempotency_retention_seconds: int,
     ) -> None:
         self._repository = repository
         self._storage = storage
         self._pagination_limit = pagination_limit
         self._document_min_text_chars = document_min_text_chars
+        self._idempotency = idempotency
+        self._idempotency_lease_seconds = idempotency_lease_seconds
+        self._idempotency_retention_seconds = idempotency_retention_seconds
 
     def create_setup(
         self, user_id: UUID, request: InterviewSetupCreateRequest, key: UUID
     ) -> InterviewSetup:
-        del key
-        row = self._repository.create_setup(user_id, request.desired_role, request.application_type)
-        return InterviewSetup.model_validate(row)
+        action_scope = "interview_setup.create"
+        claim = self._idempotency.claim(
+            user_id,
+            action_scope,
+            key,
+            request_fingerprint(request.model_dump(mode="json")),
+            self._idempotency_lease_seconds,
+        )
+        if claim.kind == "replay":
+            return InterviewSetup.model_validate(claim.response_body)
+
+        if claim.claim_token is None:
+            raise RuntimeError("idempotency claim token is missing")
+
+        try:
+            row = self._repository.create_setup(
+                user_id, request.desired_role, request.application_type
+            )
+            response = InterviewSetup.model_validate(row)
+            self._idempotency.complete(
+                user_id,
+                action_scope,
+                key,
+                claim.claim_token,
+                201,
+                response.model_dump(mode="json"),
+                "InterviewSetup.v1",
+                self._idempotency_retention_seconds,
+            )
+            self._repository.commit()
+        except Exception:
+            self._repository.rollback()
+            raise
+        return response
 
     def upload_document(
         self,

@@ -79,6 +79,34 @@ class ResolvedContractDecisions(unittest.TestCase):
             ),
         )
 
+    def test_consent_seed_001_api_contract_fixes_two_required_test_policies(self):
+        self.assert_api(
+            r"로컬 MVP 테스트 약관 정책.*?"
+            r"`terms`\s*\|\s*`v1`\s*\|\s*필수\s*\|\s*활성.*?"
+            r"`privacy`\s*\|\s*`v1`\s*\|\s*필수\s*\|\s*활성"
+        )
+
+    def test_consent_seed_002_migration_idempotently_seeds_both_policies(self):
+        self.assertRegex(
+            MIGRATIONS,
+            re.compile(
+                r"insert into public\.consent_policies\s*"
+                r"\(consent_type, policy_version, is_required, is_active\)\s*"
+                r"values\s*"
+                r"\('terms',\s*'v1',\s*true,\s*true\),\s*"
+                r"\('privacy',\s*'v1',\s*true,\s*true\).*?"
+                r"on conflict \(consent_type, policy_version\)\s*"
+                r"do update set\s*"
+                r"is_required\s*=\s*excluded\.is_required,\s*"
+                r"is_active\s*=\s*excluded\.is_active",
+                re.S | re.I,
+            ),
+        )
+        self.assertNotRegex(
+            MIGRATIONS,
+            re.compile(r"effective_at\s*=\s*excluded\.effective_at", re.I),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

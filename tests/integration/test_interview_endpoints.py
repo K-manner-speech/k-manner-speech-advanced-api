@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.core.auth import TokenClaims
 from app.main import create_app
 from app.routers.interviews import get_interview_service
-from tests.integration.test_auth_and_errors import StubTokenVerifier
+from tests.integration.test_auth_and_errors import ActiveSessionValidator, StubTokenVerifier
 
 
 class StubInterviewService:
@@ -31,10 +31,12 @@ def test_interview_setup_contract_is_registered() -> None:
         token_verifier=StubTokenVerifier(
             TokenClaims(
                 sub=str(user_id),
+                session_id=uuid4(),
                 issuer="https://project.supabase.co/auth/v1",
                 audience="authenticated",
             )
-        )
+        ),
+        session_validator=ActiveSessionValidator(),
     )
     app.dependency_overrides[get_interview_service] = lambda: StubInterviewService()
     client = TestClient(app)
@@ -48,6 +50,38 @@ def test_interview_setup_contract_is_registered() -> None:
     assert response.status_code == 201
     assert response.json()["desired_role"] == "Backend Engineer"
     assert "user_id" not in response.json()
+
+    operation = app.openapi()["paths"]["/api/v1/interview-setups"]["post"]
+    assert operation["operationId"] == "interview_setup.create"
+    assert any(
+        parameter["name"] == "Idempotency-Key" and parameter["required"]
+        for parameter in operation["parameters"]
+    )
+
+
+def test_interview_setup_requires_idempotency_key() -> None:
+    user_id = uuid4()
+    app = create_app(
+        token_verifier=StubTokenVerifier(
+            TokenClaims(
+                sub=str(user_id),
+                session_id=uuid4(),
+                issuer="https://project.supabase.co/auth/v1",
+                audience="authenticated",
+            )
+        ),
+        session_validator=ActiveSessionValidator(),
+    )
+    app.dependency_overrides[get_interview_service] = lambda: StubInterviewService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/interview-setups",
+        headers={"Authorization": "Bearer good"},
+        json={"desired_role": "Backend Engineer"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_all_interview_contract_routes_are_exposed() -> None:

@@ -288,8 +288,20 @@ erDiagram
         jsonb source_snapshot
         jsonb interview_setup_snapshot
         text interview_outcome
+        numeric overall_score
+        text summary
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    INTERVIEW_EVALUATION_SCORES {
+        uuid id PK
+        uuid result_id FK
+        text category UK
+        smallint score
+        text strength_text
+        text suggestion_text
+        text evidence_text
     }
 
     RESULT_ITEMS {
@@ -342,6 +354,7 @@ erDiagram
     AUTH_USERS ||--o{ SESSION_RESULTS : owns_snapshot
     PRACTICE_ROOMS o|--o{ SESSION_RESULTS : produced
     SESSION_RESULTS ||--o{ RESULT_ITEMS : contains
+    SESSION_RESULTS ||--o{ INTERVIEW_EVALUATION_SCORES : evaluated_by
     INTERVIEW_DOCUMENTS o|--o{ RESULT_ITEMS : source
     AUTH_USERS ||--o{ STORAGE_DELETION_JOBS : owns
 ```
@@ -356,6 +369,8 @@ erDiagram
 - `session_results`는 방과 독립된 결과 snapshot이다. 방이 삭제되어도 결과는 유지되고 `room_id`만 `NULL`이 된다.
 - `session_results.user_id`가 결과의 최종 owner이며 `result_items`는 부모 결과의 owner를 따른다.
 - `result_items.source_document_id`는 면접 문서를 선택적으로 참조해 결과 근거의 출처를 보존한다.
+- 면접 평가 category는 `question_understanding_fit`, `answer_structure`, `specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude` 다섯 개로 고정하며 각 점수는 1~20 정수다. `(result_id, category)`는 unique다.
+- 면접 점수 다섯 개가 모두 존재할 때만 `session_results.overall_score`는 단순 합계 5~100이고 상태는 `succeeded`다. 일부 누락은 `partial`, 전부 누락은 `failed`이며 두 경우 모두 종합 점수는 `NULL`이고 누락 항목은 `missing_categories`에 기록한다.
 - 면접 결과에는 `pass`, `fail`, `합격`, `불합격` 등의 채용 판정을 저장할 수 없다.
 - `storage_deletion_jobs.source_id`는 여러 source type을 가리키는 논리 참조이며 FK가 아니다.
 - `processing_timeout_policies`는 처리 테이블과 FK로 연결되지 않고 `job_type` 기반 정책으로 사용된다.
@@ -367,6 +382,7 @@ erDiagram
 | `message_audio.replacement_for_id → message_audio.id` | `SET NULL` |
 | `session_results.room_id → practice_rooms.id` | `SET NULL` |
 | `session_results.user_id → auth.users.id` | `CASCADE` |
+| `interview_evaluation_scores.result_id → session_results.id` | `CASCADE` |
 | `storage_deletion_jobs.user_id → auth.users.id` | `CASCADE` |
 
 `message_audio.message_id`, `turn_feedback.message_id`, `feedback_scores.feedback_id`, `feedback_emotions.feedback_id`, `result_items.result_id`, `result_items.source_document_id`의 기존 FK 삭제 동작은 현재 저장소의 incremental migration만으로 확정하지 않는다.
@@ -414,6 +430,20 @@ erDiagram
         timestamptz deadline_at
         timestamptz next_attempt_at
         text error_code
+    }
+
+    DOCUMENT_CHUNKS {
+        uuid id PK
+        uuid user_id FK
+        uuid document_id FK
+        uuid analysis_id FK
+        integer document_version
+        integer chunk_index UK
+        text section
+        text content
+        integer token_count
+        jsonb source_ref
+        vector embedding
     }
 
     INTERVIEW_CONFIGURATIONS {
@@ -476,6 +506,9 @@ erDiagram
     INTERVIEW_DOCUMENTS o|--o{ INTERVIEW_DOCUMENTS : replaces
     INTERVIEW_DOCUMENTS ||--o{ INTERVIEW_DOCUMENT_ANALYSES : analyzed_as
     AUTH_USERS ||--o{ INTERVIEW_DOCUMENT_ANALYSES : owns
+    INTERVIEW_DOCUMENTS ||--o{ DOCUMENT_CHUNKS : chunked_as
+    INTERVIEW_DOCUMENT_ANALYSES ||--o{ DOCUMENT_CHUNKS : produces
+    AUTH_USERS ||--o{ DOCUMENT_CHUNKS : owns
     INTERVIEW_SETUPS ||--o{ INTERVIEW_CONFIGURATIONS : configures
     AUTH_USERS ||--o{ INTERVIEW_CONFIGURATIONS : owns
     INTERVIEW_CONFIGURATIONS ||--|{ INTERVIEW_QUESTIONS : contains
@@ -490,6 +523,7 @@ erDiagram
 - 현재 문서는 `(setup_id, document_type)`별 `is_current = true`이고 삭제되지 않은 버전이 하나만 존재한다.
 - Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
 - 문서 분석은 `(document_id, idempotency_key)`가 unique이며 FK의 `ON DELETE RESTRICT`로 분석이 참조하는 문서 row의 물리 삭제를 막는다. 자료 삭제·교체 API는 문서 row를 `is_current = false`, `deleted_at = now()`로 논리 삭제하고 Storage 원본과 해당 vector만 정리하며 완료된 분석은 보존한다.
+- RAG chunk는 `(document_id, document_version, chunk_index)`가 unique이고 원본 정밀도의 3072차원 `vector` embedding을 가진다. HNSW는 2000차원 `vector` 제한을 피하기 위해 검색식과 동일한 `halfvec(3072)` cosine expression index를 사용한다. 검색은 Provider 호출 전에 owner, current document version, similarity threshold를 SQL에서 모두 적용하며 근거가 없으면 질문을 생성하지 않는다.
 - `interview_configurations.analysis_ids`는 분석 ID snapshot 배열이며 FK 배열이 아니다. 참조 무결성은 Service/Repository가 검증한다.
 - 면접 설정은 `(setup_id, version_no)`와 `(setup_id, idempotency_key)`가 unique다.
 - 한 setup에는 `processing`, `ready`, `in_progress` 상태의 활성 configuration이 하나만 존재한다.
@@ -505,6 +539,9 @@ erDiagram
 | `interview_documents.replaced_document_id → interview_documents.id` | `SET NULL` |
 | `interview_document_analyses.document_id → interview_documents.id` | `RESTRICT` |
 | `interview_document_analyses.user_id → auth.users.id` | `CASCADE` |
+| `document_chunks.document_id → interview_documents.id` | `CASCADE` |
+| `document_chunks.analysis_id → interview_document_analyses.id` | `CASCADE` |
+| `document_chunks.user_id → auth.users.id` | `CASCADE` |
 | `interview_configurations.setup_id → interview_setups.id` | `CASCADE` |
 | `interview_configurations.user_id → auth.users.id` | `CASCADE` |
 | `interview_questions.configuration_id → interview_configurations.id` | `CASCADE` |
@@ -588,6 +625,7 @@ erDiagram
 ```
 
 `idempotency_records`의 unique key는 각 column 단독이 아니라 `(user_id, action_scope, idempotency_key)` 복합 unique다.
+`account.delete`의 `in_progress` row는 partial unique index로 사용자당 하나만 허용한다. 성공한 Auth hard delete는 사용자 FK cascade로 이 row까지 즉시 삭제하므로 탈퇴 성공 snapshot은 보존하지 않는다.
 
 ### 5.1 Job 유형·상태·대상
 
@@ -702,16 +740,16 @@ flowchart LR
 | 세션 결과 | 방과 독립된 snapshot으로 보존한다. 방 삭제 시 `session_results.room_id`만 `NULL`이 된다. |
 | 면접 문서 | 삭제·교체 시 문서 row를 논리 삭제하고 Storage 원본·해당 vector와 진행 중 Job을 정리하며 완료된 분석은 보존한다. 분석이 참조 중인 문서의 물리 삭제는 `RESTRICT`된다. 삭제된 원본과 보존 분석은 새 분석·면접 구성 입력으로 재사용하지 않는다. |
 | 생성 음성 | 교체된 Storage object는 즉시 영구 삭제하고 DB에는 current version을 하나만 유지한다. |
-| 회원 탈퇴 | 사용자 소유 문서와 분석을 포함한 DB row, Storage object, vector, Job을 모두 영구 삭제한다. 일부 삭제만 완료된 상태를 성공으로 반환하지 않는다. |
+| 회원 탈퇴 | 사용자 소유 문서와 분석을 포함한 DB row, Storage object, vector, Job을 모두 영구 삭제한다. `storage.objects`에서 private bucket의 `{user_id}/` prefix를 inventory하되 실제 삭제는 Storage API로 수행한다. 일부 삭제만 완료된 상태를 성공으로 반환하지 않는다. |
 | Storage 삭제 작업 | `(bucket_id, storage_path)`당 하나의 durable claim으로 재시도하며 source FK 대신 `source_type/source_id` 논리 참조를 사용한다. |
 | 공통 Job | 사용자 또는 target 삭제 시 `CASCADE`; 삭제 전 queue cleanup·stale guard를 수행하며 별도 audit row는 보존하지 않는다. |
-| 멱등 기록 | 사용자 삭제 시 `CASCADE`; Job 삭제 시 FK만 `SET NULL`; 논리 resource locator와 안전한 snapshot은 `expires_at`까지 유지한다. |
+| 멱등 기록 | 사용자 삭제 시 `CASCADE`; Job 삭제 시 FK만 `SET NULL`; 일반 action의 논리 resource locator와 안전한 snapshot은 `expires_at`까지 유지한다. `account.delete` 성공 기록은 사용자와 함께 즉시 삭제하는 예외다. |
 
 ## 8. API 설계 시 확인할 경계
 
 - API DTO는 이 ERD의 persistence column을 그대로 노출하지 않는다. 특히 `user_id`, processing token, Storage path와 내부 error message는 서버 내부 값이다.
 - `claim_token`, `request_fingerprint`, `lease_expires_at`, 응답 snapshot과 Provider 원본 오류도 API DTO에 노출하지 않는다. Job API는 안전한 `type/status/progress/error/result_resource`만 노출한다.
-- `POST /rooms`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다.
+- 면접 준비 단위 생성, `POST /rooms`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다. 면접 준비 생성의 `action_scope`는 API operationId와 같은 `interview_setup.create`다.
 - 비동기 처리 상태는 AI 응답, 감정, 음성, 피드백, 문서 분석, 면접 configuration별로 독립적으로 표현한다.
 - 목록 cursor는 반드시 인증 사용자 소유 집합 안에서 계산한다.
 - 문서 version, 분석, 면접 configuration과 결과 snapshot은 API 응답에서 각각의 식별자와 사용 version을 명확히 구분한다.

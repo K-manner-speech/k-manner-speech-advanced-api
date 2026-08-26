@@ -37,25 +37,37 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 `vector` extension, 6개 queue, timeout policy 7종, 설정, base queue 3종의 worker heartbeat를
 검사합니다.
 
-현재 API에는 인증·온보딩·카탈로그·대화·피드백·감정·TTS·결과·면접 문서·면접 구성·Job
-조회가 포함됩니다. 계정 완전 삭제는 vector 삭제 계약, 면접 5항목 평가는 점수 DTO/DB 계약이
-확정될 때까지 보류합니다.
+현재 API에는 active Auth session 검증, 인증·온보딩·회원 탈퇴·카탈로그·대화·피드백·감정·TTS·결과·면접 문서·면접 구성·Job
+조회가 포함됩니다. Worker는 일곱 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
+처리합니다. 회원 탈퇴는 private Storage user-prefix object, Job/queue, DB/vector와 Supabase Auth 사용자를 즉시 영구 삭제하며 완료 뒤 멱등 snapshot을 보존하지 않습니다.
 
 ## 로컬 면접 시연
 
 원격 Supabase schema에 `supabase/migrations/*.sql`을 순서대로 적용하고, `.env`에
 `DATABASE_URL`, Supabase 설정, `OPENAI_API_KEY`, `OPENAI_INTERVIEW_MODEL`을 채웁니다.
-API와 문서 분석 worker는 서로 다른 PowerShell 창에서 실행해야 합니다.
+API와 base queue Worker 세 개는 서로 다른 PowerShell 창에서 실행해야 합니다.
 
 ```powershell
 # 창 1: API
 $env:UV_CACHE_DIR='.uv-cache'
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 
-# 창 2: 문서 분석 및 면접 질문 생성 worker
+# 창 2: 대화 응답 worker
+$env:UV_CACHE_DIR='.uv-cache'
+uv run python -m worker.conversation_text
+
+# 창 3: 감정·TTS·피드백·결과 worker
+$env:UV_CACHE_DIR='.uv-cache'
+uv run python -m worker.interactive_ai
+
+# 창 4: 문서 분석 및 면접 질문 생성 worker
 $env:UV_CACHE_DIR='.uv-cache'
 uv run python -m worker.document_analysis
 ```
+
+Worker 실행 전 `.env`에는 `WORKER_VISIBILITY_TIMEOUT_SECONDS`를 포함한 필수 설정과 기능별
+Provider model ID가 모두 있어야 합니다. embedding model은 DB의 `vector(3072)` 계약과 맞는
+`text-embedding-3-large`만 허용합니다.
 
 Swagger UI에서 Bearer token과 매 요청의 `Idempotency-Key`(새 UUID)를 입력하고 다음 순서로
 시연합니다.

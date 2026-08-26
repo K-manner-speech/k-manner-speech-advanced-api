@@ -21,7 +21,7 @@
 
 | 구분 | 계약 |
 | --- | --- |
-| 일반 API·Job polling | local JWT 검증, JWKS cache, `alg/iss/aud/exp` 검사 |
+| 일반 API·Job polling | local JWT 검증, JWKS cache, `alg/iss/aud/exp/session_id` 검사 후 `(session_id,user_id)`가 `auth.sessions`에 존재하는지 확인 |
 | `kid` miss·key rotation | JWKS refresh 후 정확히 1회 재검증 |
 | 회원 탈퇴 등 민감 action | local 검증 후 Supabase Auth `get_user` 재확인 |
 | 회원가입·로그인·복구·재설정·비밀번호 변경 | React → Supabase Auth 직접 호출; 본 명세의 FastAPI endpoint가 아님 |
@@ -85,6 +85,7 @@ Router나 Service의 owner-scoped 직접 SQL은 금지한다. Repository method�
 - 같은 요청이 아직 claim 중이면 `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`, `retryable=true`다. 계산 가능한 경우에만 `Retry-After`를 보낸다.
 - Auth와 기본 DTO 검증은 claim 전에 수행한다. 확정적인 non-retryable 4xx만 terminal snapshot으로 저장한다. 429/5xx/timeout/부분 성공 가능성은 같은 key로 reconcile-first 복구한다.
 - Snapshot에 raw 문서·대화, token, signed URL, Provider 원본은 저장하지 않는다.
+- `account.delete`는 즉시 영구 삭제의 예외다. 처리 중·실패 재시도에는 `Idempotency-Key`를 사용하지만 성공한 Auth hard delete가 사용자와 `idempotency_records`를 함께 cascade 삭제하므로 completed snapshot을 보존하지 않는다. 성공 뒤 남은 token의 재호출은 session 검증에서 `401`이다.
 
 ### 3.3 Cursor pagination
 
@@ -128,9 +129,24 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | `me_language.replace` | `PUT /api/v1/me/language` | Bearer | - | `LanguageReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,422 | `ko|en`; Zustand/localStorage 값은 server 판정을 대체하지 않음 |
 | `me_terms.replace` | `PUT /api/v1/me/terms` | Bearer | - | `TermsReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,409,422 | 활성 필수 policy version과 일치 검증 |
 | `onboarding.complete` | `POST /api/v1/me/onboarding/complete` | Bearer | 필수 | 빈 object | `200 MeResponse` | 401,404,409,422 | profile/language/필수 consent를 server가 재검증 후 완료 설정 |
-| `account.delete` | `DELETE /api/v1/me` | Bearer+`get_user` | 필수 | 없음 | `204` | 401,409,500,503 | owner 전체 DB/Storage/vector/job 삭제 orchestration; 부분 삭제를 성공 처리 금지 |
+| `account.delete` | `DELETE /api/v1/me` | Bearer+active `session_id`+`get_user` | 필수 | 없음 | `204` | 401,409,500,503 | claim 확정 후 일반 API 차단, Job cancel·user queue cleanup, `storage.objects` user prefix inventory의 실제 Storage API 삭제·잔존 0 확인, Auth hard delete/cascade 순서. 부분 삭제를 성공 처리하지 않으며 성공 멱등 snapshot은 보존하지 않음 |
 
 Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Local MVP email verification은 비활성이다.
+
+모든 인증 API는 JWT의 `session_id`가 `auth.sessions`에서 같은 `jwt.sub`에 속하는지 확인한다. 탈퇴 처리 중에는 일반 API를 `401 INVALID_AUTH_SESSION`으로 차단하되 `DELETE /api/v1/me`의 동일 작업 재시도만 세션 존재 검사를 통과할 수 있다. 세션 저장소를 확인할 수 없으면 `503 AUTH_SESSION_UNAVAILABLE`이며 local JWT 성공만으로 요청을 계속하지 않는다.
+
+#### 로컬 MVP 테스트 약관 정책
+
+| `consent_type` | `policy_version` | 동의 조건 | 상태 |
+| --- | --- | --- | --- |
+| `terms` | `v1` | 필수 | 활성 |
+| `privacy` | `v1` | 필수 | 활성 |
+
+`GET /api/v1/me`는 위 두 정책의 현재 동의 상태를 반환한다. `PUT /api/v1/me/terms`는 요청된
+정책의 정확한 type/version과 `accepted:true`를 받아 저장하며, 두 필수 정책 모두 동의하지 않으면
+`POST /api/v1/me/onboarding/complete`는 `409 ONBOARDING_REQUIREMENTS_MISSING`을 반환한다.
+이 식별자는 로컬 MVP 테스트 계약이다. 실제 약관 본문이 변경되면 기존 동의 이력을 덮어쓰지
+않고 새 `policy_version`을 발행하고 이전 version을 비활성화한다.
 
 ### 4.3 Catalog
 
@@ -181,10 +197,11 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 
 Room이 `completed|failed`로 종료될 때 Service가 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. Client create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
 
-### 4.7 Interview documents·analysis
+### 4.7 Interview setup·documents·analysis
 
 | operationId | Method/path | Auth | Idem | Request | Success | Errors | Owner/Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `interview_setup.create` | `POST /api/v1/interview-setups` | Bearer | 필수 | `InterviewSetupCreateRequest` | `201 InterviewSetup`; 동일 key·동일 payload 재요청도 생성 당시 `201` snapshot 재생 | 401,409,422,503 | `jwt.sub -> new setup.user_id`; owner/status/progress 입력 금지; 면접 문서·구성·연습방을 묶는 준비 단위 생성 |
 | `interview_document.create` | `POST /api/v1/interview-documents` | Bearer | 필수 | `multipart DocumentUploadRequest` | `201 InterviewDocument` | 401,413,415,422,503 | max 10MB; 이력서·자기소개서는 PDF/DOCX, 포트폴리오는 PDF; magic/parser validation, server key/private bucket |
 | `interview_document.list` | `GET /api/v1/interview-documents` | Bearer | - | cursor,limit,document_type | `200 Page[InterviewDocument]` | 401,422 | owner/current/version scope |
 | `interview_document.get` | `GET /api/v1/interview-documents/{document_id}` | Bearer | - | path | `200 InterviewDocument` | 401,404 | direct owner |
@@ -261,13 +278,23 @@ Configuration generation은 Supabase pgvector에서 owner/document/version metad
 | `AudioAccessResponse` | `status:'processing'|'ready'|'failed'`, `signed_url|null`, `expires_at|null`, audio type; storage path 금지 |
 | `SessionResultSummary` | `id`, `attempt_no`, `status`, `missing_categories`, `created_at` |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
-| `SessionResult` | summary fields, items, safe source refs; hiring pass/fail 판정 금지 |
+| `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
+| `InterviewEvaluation` | `status:'succeeded'|'partial'|'failed'`, `overall_score:5..100|null`, summary, scores, `missing_categories` |
+| `SessionResult` | summary fields, items, safe source refs, 면접이면 `interview_evaluation`; hiring pass/fail 판정 금지 |
 | `DomainJobAccepted` | target `DomainRef`, `job:JobRef` |
+
+면접 평가 category는 `question_understanding_fit`, `answer_structure`,
+`specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude`의 다섯 항목으로
+고정한다. 각 점수는 1~20 정수이며 다섯 점수가 모두 존재할 때만 `overall_score`를 단순
+합계로 계산한다. 하나 이상 누락되면 `status='partial'`, `overall_score=null`이고 누락 항목을
+`missing_categories`에 기록한다. 다섯 항목이 모두 누락되면 `status='failed'`다.
 
 ### 5.5 Interview
 
 | Schema | Fields/constraints |
 | --- | --- |
+| `InterviewSetupCreateRequest` | `desired_role:string` 1..200자, `application_type:string|null` 최대 100자; owner/status/progress 금지 |
+| `InterviewSetup` | `id`, `desired_role`, `application_type|null`, `status`, `preparation_progress`; owner ID 비노출 |
 | `DocumentUploadRequest` | file max 10MB. `resume`·`self_introduction`은 PDF/DOCX, `portfolio`는 PDF만 허용. `document_type:'resume'|'portfolio'|'self_introduction'`; client Storage key 금지 |
 | `InterviewDocument` | `id`, type, safe original filename, MIME, size, version, current, upload/analysis status; storage path·raw text 금지 |
 | `AnalysisAccepted` | `analysis_id`, `document_id`, `document_version`, `job` |

@@ -33,6 +33,7 @@ class AppSettings(BaseSettings):
     pagination_limit: int = Field(gt=0)
     user_queue_limit: int = Field(gt=0)
     worker_concurrency: int = Field(gt=0)
+    worker_visibility_timeout_seconds: int = Field(gt=60)
     rag_similarity_threshold: float = Field(gt=0, le=1)
     context_summary_trigger_tokens: int = Field(gt=0)
     document_min_text_chars: int = Field(gt=0)
@@ -79,3 +80,10 @@ class AppSettings(BaseSettings):
         if set(queue_names) != required:
             raise ValueError("queue names must match the required queues and DLQs")
         return queue_names
+
+    @field_validator("openai_embedding_model")
+    @classmethod
+    def validate_embedding_model(cls, model: str) -> str:
+        if model != "text-embedding-3-large":
+            raise ValueError("embedding model must match the architecture contract")
+        return model

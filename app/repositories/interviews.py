@@ -36,8 +36,13 @@ class InterviewRepository:
             .mappings()
             .one()
         )
-        self._session.commit()
         return dict(row)
+
+    def commit(self) -> None:
+        self._session.commit()
+
+    def rollback(self) -> None:
+        self._session.rollback()
 
     def setup_owned(self, user_id: UUID, setup_id: UUID) -> bool:
         return (
@@ -80,6 +85,7 @@ class InterviewRepository:
             if old is None:
                 raise LookupError("document not found")
             self._cancel_document_jobs(replaced_document_id)
+            self._delete_document_chunks(user_id, replaced_document_id)
         row = (
             self._session.execute(
                 text("""
@@ -245,6 +251,7 @@ class InterviewRepository:
         if row is None:
             return False
         self._cancel_document_jobs(document_id)
+        self._delete_document_chunks(user_id, document_id)
         self._session.execute(
             text("""
                 update public.interview_configurations c set status = 'invalidated',
@@ -259,6 +266,15 @@ class InterviewRepository:
         )
         self._session.commit()
         return True
+
+    def _delete_document_chunks(self, user_id: UUID, document_id: UUID) -> None:
+        self._session.execute(
+            text(
+                "delete from public.document_chunks "
+                "where document_id = :document_id and user_id = :user_id"
+            ),
+            {"document_id": document_id, "user_id": user_id},
+        )
 
     def _cancel_document_jobs(self, document_id: UUID) -> None:
         self._session.execute(

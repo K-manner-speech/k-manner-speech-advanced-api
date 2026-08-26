@@ -81,5 +81,9 @@ class SupabaseStorageSigner:
         try:
             with urlopen(request, timeout=15):  # noqa: S310
                 pass
-        except (HTTPError, URLError, TimeoutError) as error:
+        except HTTPError as error:
+            if method == "DELETE" and error.code == 404:
+                return
+            raise RuntimeError("storage object operation failed") from error
+        except (URLError, TimeoutError) as error:
             raise RuntimeError("storage object operation failed") from error
