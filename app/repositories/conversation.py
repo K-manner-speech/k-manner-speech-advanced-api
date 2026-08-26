@@ -11,6 +11,14 @@ from sqlalchemy.orm import Session
 from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
 
 
+class InterviewQuestionModeError(ValueError):
+    pass
+
+
+class InterviewQuestionOrderError(ValueError):
+    pass
+
+
 class ConversationRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -25,8 +33,7 @@ class ConversationRepository:
                 text(
                     """
                 select id, title, practice_type, persona_id, scenario_id, status,
-                       turn_count, ended_reason, started_at, completed_at, updated_at,
-                       goal_snapshot as goal
+                       turn_count, ended_reason, started_at, completed_at, updated_at
                 from public.practice_rooms
                 where user_id = :authenticated_user_id
                   and practice_type = :practice_type
@@ -88,8 +95,7 @@ class ConversationRepository:
                     (:authenticated_user_id, :practice_type, :persona_id, :scenario_id,
                      :title, :goal)
                 returning id, title, practice_type, persona_id, scenario_id, status,
-                          turn_count, ended_reason, started_at, completed_at, updated_at,
-                          goal_snapshot as goal
+                          turn_count, ended_reason, started_at, completed_at, updated_at
                 """
                 ),
                 {
@@ -225,7 +231,7 @@ class ConversationRepository:
             self._session.execute(
                 text(
                     """
-                select id, status
+                select id, status, practice_type, interview_configuration_id
                 from public.practice_rooms
                 where id = :room_id and user_id = :authenticated_user_id
                 for update
@@ -240,6 +246,35 @@ class ConversationRepository:
             raise LookupError("room not found")
         if room["status"] != "in_progress":
             raise RuntimeError("room is not active")
+
+        question_id = request.current_interview_question_id
+        if room["practice_type"] == "interview":
+            if question_id is None:
+                raise InterviewQuestionModeError("interview question is required")
+            next_question_id = self._session.execute(
+                text(
+                    """
+                    select q.id
+                    from public.interview_questions q
+                    where q.configuration_id = :configuration_id
+                      and not exists (
+                        select 1 from public.interview_answers a
+                        where a.question_id = q.id and a.room_id = :room_id
+                      )
+                    order by q.sequence_no, q.id
+                    limit 1
+                    for update of q
+                    """
+                ),
+                {
+                    "configuration_id": room["interview_configuration_id"],
+                    "room_id": room_id,
+                },
+            ).scalar_one_or_none()
+            if next_question_id is None or next_question_id != question_id:
+                raise InterviewQuestionOrderError("interview question is out of order")
+        elif question_id is not None:
+            raise InterviewQuestionModeError("question is not allowed for this room")
 
         active_jobs = self._session.execute(
             text(
@@ -280,6 +315,21 @@ class ConversationRepository:
             .mappings()
             .one()
         )
+        if question_id is not None:
+            self._session.execute(
+                text(
+                    """
+                    insert into public.interview_answers
+                        (question_id, room_id, message_id, answer_attempt_no, is_current)
+                    values (:question_id, :room_id, :message_id, 1, true)
+                    """
+                ),
+                {
+                    "question_id": question_id,
+                    "room_id": room_id,
+                    "message_id": message_row["id"],
+                },
+            )
         processing_id = self._session.execute(
             text(
                 """

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.readiness import ReadinessReport
@@ -77,7 +79,10 @@ def test_ready_returns_safe_503_envelope_for_failed_checks() -> None:
     assert "exception" not in response.text.lower()
 
 
-def test_default_app_fails_closed_until_adapters_are_configured() -> None:
+def test_default_app_fails_closed_until_adapters_are_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     client = TestClient(create_app())
 
     response = client.get("/api/v1/health/ready")

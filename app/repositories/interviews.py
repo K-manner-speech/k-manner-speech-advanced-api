@@ -223,7 +223,11 @@ class InterviewRepository:
         if row is None:
             return None
         return {
-            **dict(row),
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "document_version": row["document_version"],
+            "status": row["status"],
+            "extracted_sections": row["extracted_sections"] or {},
             "source_refs": [],
             "error": {"code": row["error_code"], "retryable": True} if row["error_code"] else None,
         }
@@ -416,7 +420,13 @@ class InterviewRepository:
         if row is None:
             return None
         return {
-            **dict(row),
+            "id": row["id"],
+            "setup_id": row["setup_id"],
+            "version_no": row["version_no"],
+            "status": row["status"],
+            "document_version_snapshot": row["document_version_snapshot"],
+            "analysis_ids": row["analysis_ids"],
+            "question_count": row["question_count"],
             "error": {"code": row["error_code"], "retryable": True} if row["error_code"] else None,
         }
 

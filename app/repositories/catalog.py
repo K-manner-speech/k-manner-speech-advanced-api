@@ -67,7 +67,10 @@ class CatalogRepository:
                 from public.scenarios s
                 left join public.persona_scenarios ps on ps.scenario_id = s.id
                 where s.is_active = true
-                  and (:persona_id is null or ps.persona_id = :persona_id)
+                  and (
+                    cast(:persona_id as uuid) is null
+                    or ps.persona_id = cast(:persona_id as uuid)
+                  )
                 order by s.id
                 limit :limit
                 """
@@ -75,6 +78,15 @@ class CatalogRepository:
             {"persona_id": persona_id, "limit": limit},
         ).mappings()
         return [dict(row) for row in rows]
+
+    def persona_exists(self, persona_id: UUID) -> bool:
+        return (
+            self._session.execute(
+                text("select 1 from public.personas where id = :persona_id and is_active = true"),
+                {"persona_id": persona_id},
+            ).first()
+            is not None
+        )
 
     def get_scenario(self, scenario_id: UUID) -> dict[str, Any] | None:
         row = (

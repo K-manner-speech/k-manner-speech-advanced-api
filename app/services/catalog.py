@@ -56,6 +56,8 @@ class SqlCatalogService:
         self, cursor: str | None, limit: int, persona_id: UUID | None
     ) -> Page[ScenarioSummary]:
         self._validate_page(cursor, limit)
+        if persona_id is not None and not self._repository.persona_exists(persona_id):
+            raise ApiError(404, "PERSONA_NOT_FOUND", "페르소나를 찾을 수 없습니다.")
         return Page(
             items=[
                 ScenarioSummary.model_validate(row)

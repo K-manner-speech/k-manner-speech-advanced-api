@@ -5,6 +5,7 @@
 .DS_Store
 
 .env
+.env.test
 genai/
 __pycache__/
 *.py[cod]

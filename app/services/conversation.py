@@ -4,7 +4,11 @@ from typing import Protocol
 from uuid import UUID
 
 from app.core.errors import ApiError
-from app.repositories.conversation import ConversationRepository
+from app.repositories.conversation import (
+    ConversationRepository,
+    InterviewQuestionModeError,
+    InterviewQuestionOrderError,
+)
 from app.schemas.common import Job, JobError, JobProgress, JobRef
 from app.schemas.pagination import Page
 from app.schemas.rooms import (
@@ -69,8 +73,9 @@ class SqlConversationService:
         if catalog is None:
             raise ApiError(422, "INVALID_CATALOG_COMBINATION", "연습 조합이 유효하지 않습니다.")
         row = self._repository.create_room(user_id, request, catalog)
+        room = Room.model_validate(row)
         self._repository.commit()
-        return Room.model_validate(row), True
+        return room, True
 
     def _validate_page(self, cursor: str | None, limit: int) -> None:
         if cursor is not None or limit > self._maximum_page_limit:
@@ -140,6 +145,18 @@ class SqlConversationService:
         except OverflowError as error:
             raise ApiError(
                 429, "USER_QUEUE_LIMIT_EXCEEDED", "처리 대기 한도를 초과했습니다.", retryable=True
+            ) from error
+        except InterviewQuestionModeError as error:
+            raise ApiError(
+                422,
+                "INTERVIEW_QUESTION_MODE_INVALID",
+                "현재 연습 유형에 맞는 면접 질문이 필요합니다.",
+            ) from error
+        except InterviewQuestionOrderError as error:
+            raise ApiError(
+                409,
+                "INTERVIEW_QUESTION_OUT_OF_ORDER",
+                "현재 순서의 면접 질문에 먼저 답변해야 합니다.",
             ) from error
         return MessageAccepted(
             message=self._message(message_row),

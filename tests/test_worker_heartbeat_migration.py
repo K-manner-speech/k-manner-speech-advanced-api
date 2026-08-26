@@ -3,7 +3,8 @@ from pathlib import Path
 
 def test_worker_heartbeat_and_required_queues_are_migrated_privately() -> None:
     migrations = "\n".join(
-        path.read_text() for path in sorted(Path("supabase/migrations").glob("*.sql"))
+        path.read_text(encoding="utf-8")
+        for path in sorted(Path("supabase/migrations").glob("*.sql"))
     ).lower()
 
     assert "create table public.worker_heartbeats" in migrations
@@ -22,7 +23,8 @@ def test_worker_heartbeat_and_required_queues_are_migrated_privately() -> None:
 
 def test_worker_heartbeat_table_has_queue_freshness_key() -> None:
     migrations = "\n".join(
-        path.read_text() for path in sorted(Path("supabase/migrations").glob("*.sql"))
+        path.read_text(encoding="utf-8")
+        for path in sorted(Path("supabase/migrations").glob("*.sql"))
     ).lower()
 
     assert "primary key (worker_id, queue_name)" in migrations
@@ -31,7 +33,8 @@ def test_worker_heartbeat_table_has_queue_freshness_key() -> None:
 
 def test_required_vector_extension_is_declared() -> None:
     migrations = "\n".join(
-        path.read_text() for path in sorted(Path("supabase/migrations").glob("*.sql"))
+        path.read_text(encoding="utf-8")
+        for path in sorted(Path("supabase/migrations").glob("*.sql"))
     ).lower()
 
     assert "create extension if not exists vector" in migrations
