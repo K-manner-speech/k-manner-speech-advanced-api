@@ -12,13 +12,16 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.adapters.interview_provider import (
+    EmbeddingProvider,
     InterviewAnalysisResult,
     InterviewProvider,
     InterviewProviderError,
     InterviewQuestionResult,
+    OpenAIEmbeddingProvider,
     OpenAIInterviewProvider,
 )
 from app.core.dependencies import get_session_factory, get_settings
+from app.rag.interview import DocumentChunk, chunk_document
 from app.schemas.common import JobStatus
 from worker.heartbeat import HeartbeatRepository
 
@@ -46,7 +49,20 @@ class WorkItem:
 class WorkerRepository(Protocol):
     def read_one(self) -> QueueMessage | None: ...
     def claim(self, job_id: UUID) -> WorkItem | None: ...
-    def complete_analysis(self, item: WorkItem, result: InterviewAnalysisResult) -> bool: ...
+    def complete_analysis(
+        self,
+        item: WorkItem,
+        result: InterviewAnalysisResult,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float]],
+    ) -> bool: ...
+    def retrieve_evidence(
+        self,
+        item: WorkItem,
+        query_embedding: list[float],
+        threshold: float,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
     def complete_configuration(self, item: WorkItem, result: InterviewQuestionResult) -> bool: ...
     def retry(self, item: WorkItem, code: str) -> None: ...
     def fail(self, item: WorkItem, code: str) -> None: ...
@@ -59,11 +75,17 @@ class DocumentAnalysisWorker:
         self,
         repository: WorkerRepository,
         provider: InterviewProvider,
+        embedding_provider: EmbeddingProvider,
         maximum_attempts: int,
+        similarity_threshold: float = 0.7,
+        retrieval_limit: int = 8,
     ) -> None:
         self._repository = repository
         self._provider = provider
+        self._embedding_provider = embedding_provider
         self._maximum_attempts = maximum_attempts
+        self._similarity_threshold = similarity_threshold
+        self._retrieval_limit = retrieval_limit
 
     def run_once(self) -> bool:
         message = self._repository.read_one()
@@ -75,13 +97,34 @@ class DocumentAnalysisWorker:
             return True
         try:
             if item.job_type == "interview_document_analysis":
+                chunks = chunk_document(str(item.payload["extracted_text"]))
+                if not chunks:
+                    self._repository.fail(item, "INTERVIEW_DOCUMENT_TEXT_EMPTY")
+                    self._repository.acknowledge(message.message_id)
+                    return True
+                embeddings = self._embedding_provider.embed([chunk.text for chunk in chunks])
                 analysis_result = self._provider.analyze_document(
                     str(item.payload["extracted_text"])
                 )
-                completed = self._repository.complete_analysis(item, analysis_result)
+                completed = self._repository.complete_analysis(
+                    item, analysis_result, chunks, embeddings
+                )
             elif item.job_type == "interview_configuration_generation":
+                query_embedding = self._embedding_provider.embed(
+                    [str(item.payload["retrieval_query"])]
+                )[0]
+                evidence = self._repository.retrieve_evidence(
+                    item,
+                    query_embedding,
+                    self._similarity_threshold,
+                    self._retrieval_limit,
+                )
+                if not evidence:
+                    self._repository.fail(item, "INTERVIEW_RAG_EVIDENCE_NOT_FOUND")
+                    self._repository.acknowledge(message.message_id)
+                    return True
                 question_result = self._provider.generate_questions(
-                    dict(item.payload["analysis"]),
+                    {"evidence": evidence},
                     dict(item.payload["conditions"]),
                     int(item.payload["question_count"]),
                 )
@@ -141,7 +184,7 @@ class SqlDocumentAnalysisWorkerRepository:
             self._session.execute(
                 text(
                     """
-                    select id, job_type, interview_document_analysis_id,
+                    select id, user_id, job_type, interview_document_analysis_id,
                            interview_configuration_id, transport_attempt_count
                     from public.processing_jobs
                     where id = :job_id and status = 'queued'
@@ -210,11 +253,13 @@ class SqlDocumentAnalysisWorkerRepository:
                         """
                         update public.interview_configurations c
                         set attempt_count = attempt_count + 1, updated_at = now()
+                        from public.interview_setups s
                         where c.id = :target_id and c.status = 'processing'
+                          and s.id = c.setup_id
                         returning c.processing_token, c.question_count,
                                   coalesce(c.document_version_snapshot->'conditions', '{}'::jsonb)
                                     as conditions,
-                                  c.analysis_ids
+                                  c.analysis_ids, s.desired_role
                         """
                     ),
                     {"target_id": target_id},
@@ -222,24 +267,17 @@ class SqlDocumentAnalysisWorkerRepository:
                 .mappings()
                 .one_or_none()
             )
-            analysis_rows = []
-            if target is not None:
-                analysis_rows = list(
-                    self._session.execute(
-                        text(
-                            """
-                            select id, extracted_data, citation_evidence
-                            from public.interview_document_analyses
-                            where id = any(:analysis_ids) and processing_status = 'succeeded'
-                            order by id
-                            """
-                        ),
-                        {"analysis_ids": target["analysis_ids"]},
-                    ).mappings()
-                )
             payload = (
                 {
-                    "analysis": {"documents": [dict(row) for row in analysis_rows]},
+                    "user_id": job["user_id"],
+                    "analysis_ids": target["analysis_ids"],
+                    "retrieval_query": json.dumps(
+                        {
+                            "desired_role": target["desired_role"],
+                            "conditions": target["conditions"],
+                        },
+                        ensure_ascii=False,
+                    ),
                     "conditions": dict(target["conditions"]),
                     "question_count": target["question_count"],
                 }
@@ -259,7 +297,77 @@ class SqlDocumentAnalysisWorkerRepository:
             payload=payload,
         )
 
-    def complete_analysis(self, item: WorkItem, result: InterviewAnalysisResult) -> bool:
+    def complete_analysis(
+        self,
+        item: WorkItem,
+        result: InterviewAnalysisResult,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float]],
+    ) -> bool:
+        if len(chunks) != len(embeddings):
+            raise InterviewProviderError("INTERVIEW_EMBEDDING_SCHEMA_INVALID", retryable=False)
+        locked = (
+            self._session.execute(
+                text(
+                    """
+                select a.document_id, a.user_id, d.version_no as document_version
+                from public.interview_document_analyses a
+                join public.interview_documents d on d.id = a.document_id
+                where a.id = :target_id and a.processing_token = :token
+                  and a.processing_status = 'processing'
+                for update of a
+                """
+                ),
+                {"target_id": item.target_id, "token": item.processing_token},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if locked is None:
+            self._session.rollback()
+            return False
+        self._session.execute(
+            text(
+                """
+                delete from public.document_chunks
+                where document_id = :document_id and document_version = :document_version
+                """
+            ),
+            {
+                "document_id": locked["document_id"],
+                "document_version": locked["document_version"],
+            },
+        )
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            self._session.execute(
+                text(
+                    """
+                    insert into public.document_chunks
+                        (user_id, document_id, analysis_id, document_version, chunk_index,
+                         section, content, token_count, source_ref, embedding)
+                    values (:user_id, :document_id, :analysis_id, :document_version, :chunk_index,
+                            :section, :content, :token_count, cast(:source_ref as jsonb),
+                            cast(:embedding as extensions.vector))
+                    """
+                ),
+                {
+                    "user_id": locked["user_id"],
+                    "document_id": locked["document_id"],
+                    "analysis_id": item.target_id,
+                    "document_version": locked["document_version"],
+                    "chunk_index": chunk.index,
+                    "section": "document",
+                    "content": chunk.text,
+                    "token_count": chunk.token_estimate,
+                    "source_ref": json.dumps(
+                        {
+                            "analysis_id": str(item.target_id),
+                            "chunk_index": chunk.index,
+                        }
+                    ),
+                    "embedding": "[" + ",".join(str(value) for value in embedding) + "]",
+                },
+            )
         updated = self._session.execute(
             text(
                 """
@@ -299,6 +407,41 @@ class SqlDocumentAnalysisWorkerRepository:
         self._session.commit()
         return True
 
+    def retrieve_evidence(
+        self,
+        item: WorkItem,
+        query_embedding: list[float],
+        threshold: float,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = self._session.execute(
+            text(
+                """
+                select ch.id as chunk_id, ch.document_id, ch.analysis_id, ch.chunk_index,
+                       ch.content,
+                       1 - (ch.embedding <=> cast(:embedding as extensions.vector)) as similarity
+                from public.document_chunks ch
+                join public.interview_document_analyses a on a.id = ch.analysis_id
+                join public.interview_documents d on d.id = ch.document_id
+                where ch.user_id = :user_id
+                  and ch.analysis_id = any(:analysis_ids)
+                  and a.processing_status = 'succeeded'
+                  and d.is_current and d.upload_status <> 'deleted'
+                  and 1 - (ch.embedding <=> cast(:embedding as extensions.vector)) >= :threshold
+                order by ch.embedding <=> cast(:embedding as extensions.vector), ch.id
+                limit :limit
+                """
+            ),
+            {
+                "embedding": "[" + ",".join(str(value) for value in query_embedding) + "]",
+                "user_id": item.payload["user_id"],
+                "analysis_ids": item.payload["analysis_ids"],
+                "threshold": threshold,
+                "limit": limit,
+            },
+        ).mappings()
+        return [dict(row) for row in rows]
+
     def complete_configuration(self, item: WorkItem, result: InterviewQuestionResult) -> bool:
         locked = self._session.execute(
             text(
@@ -336,7 +479,7 @@ class SqlDocumentAnalysisWorkerRepository:
                     "question_type": question.type,
                     "required": question.required,
                     "source_refs": json.dumps(
-                        [source.model_dump() for source in question.source_refs],
+                        [source.model_dump(mode="json") for source in question.source_refs],
                         ensure_ascii=False,
                     ),
                     "evaluation_focus": json.dumps(question.evaluation_focus, ensure_ascii=False),
@@ -450,8 +593,19 @@ def main() -> None:
     provider = OpenAIInterviewProvider(
         settings.openai_api_key.get_secret_value(), settings.openai_interview_model
     )
+    embedding_provider = OpenAIEmbeddingProvider(
+        settings.openai_api_key.get_secret_value(),
+        settings.openai_embedding_model,
+        dimensions=settings.openai_embedding_dimensions,
+    )
     repository = SqlDocumentAnalysisWorkerRepository(session)
-    worker = DocumentAnalysisWorker(repository, provider, maximum_attempts=3)
+    worker = DocumentAnalysisWorker(
+        repository,
+        provider,
+        embedding_provider,
+        maximum_attempts=3,
+        similarity_threshold=settings.rag_similarity_threshold,
+    )
     heartbeat = HeartbeatRepository(session)
     worker_id = f"document-analysis-{UUID(int=0)}"
     started_at = datetime.now(UTC)

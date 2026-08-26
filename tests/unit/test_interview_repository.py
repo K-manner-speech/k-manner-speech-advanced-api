@@ -83,4 +83,8 @@ def test_delete_document_scrubs_extracted_content_and_keeps_owner_scope() -> Non
     assert "deleted_at = now()" in delete_sql
     assert "id = :document_id and user_id = :user_id and is_current" in delete_sql
     assert session.parameters[0] == {"document_id": document_id, "user_id": user_id}
+    combined_sql = "\n".join(session.sql)
+    assert "status = 'cancelled', progress_stage = null" in combined_sql
+    assert "update public.interview_document_analyses" in combined_sql
+    assert "processing_status = 'invalidated'" in combined_sql
     assert session.committed is False

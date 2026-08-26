@@ -247,6 +247,7 @@ class InterviewRepository:
                 update public.interview_documents
                 set is_current = false,
                     extracted_content = '{}'::jsonb,
+                    analysis_status = 'invalidated',
                     deleted_at = now(),
                     updated_at = now()
                 where id = :document_id and user_id = :user_id and is_current
@@ -257,6 +258,21 @@ class InterviewRepository:
         if row is None:
             return False
         self._cancel_document_jobs(document_id)
+        self._session.execute(
+            text(
+                """
+                update public.interview_document_analyses
+                set processing_status = 'invalidated', completed_at = now(), updated_at = now()
+                where document_id = :document_id
+                  and processing_status in ('processing', 'succeeded')
+                """
+            ),
+            {"document_id": document_id},
+        )
+        self._session.execute(
+            text("delete from public.document_chunks where document_id = :document_id"),
+            {"document_id": document_id},
+        )
         self._session.execute(
             text("""
                 update public.interview_configurations c set status = 'invalidated',
@@ -275,7 +291,8 @@ class InterviewRepository:
         self._session.execute(
             text("""
                 update public.processing_jobs j
-                set status = 'cancelled', completed_at = now(), updated_at = now()
+                set status = 'cancelled', progress_stage = null,
+                    completed_at = now(), updated_at = now()
                 from public.interview_document_analyses a
                 where j.interview_document_analysis_id = a.id and a.document_id = :document_id
                   and j.status in ('queued', 'processing')

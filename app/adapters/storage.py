@@ -81,5 +81,16 @@ class SupabaseStorageSigner:
         try:
             with urlopen(request, timeout=15):  # noqa: S310
                 pass
-        except (HTTPError, URLError, TimeoutError) as error:
+        except HTTPError as error:
+            if method == "DELETE":
+                if error.code == 404:
+                    return
+                try:
+                    payload = json.loads(error.read())
+                except (OSError, TypeError, ValueError):
+                    payload = {}
+                if payload.get("code") == "NoSuchKey":
+                    return
+            raise RuntimeError("storage object operation failed") from error
+        except (URLError, TimeoutError) as error:
             raise RuntimeError("storage object operation failed") from error

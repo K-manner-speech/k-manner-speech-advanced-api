@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 class InterviewProviderError(RuntimeError):
@@ -45,6 +49,7 @@ class InterviewAnalysisResult(BaseModel):
 class QuestionSourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    chunk_id: UUID
     section: str = Field(min_length=1, max_length=100)
 
 
@@ -83,10 +88,84 @@ class InterviewProvider(Protocol):
     ) -> InterviewQuestionResult: ...
 
 
+class EmbeddingProvider(Protocol):
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class OpenAIEmbeddingProvider:
+    _endpoint = "https://api.openai.com/v1/embeddings"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout_seconds: int = 60,
+        dimensions: int = 3072,
+    ) -> None:
+        self._api_key = api_key
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._dimensions = dimensions
+
+    @staticmethod
+    def parse_embeddings(payload: str, expected_count: int) -> list[list[float]]:
+        try:
+            data = json.loads(payload)["data"]
+            ordered = sorted(data, key=lambda item: item["index"])
+            vectors = [[float(value) for value in item["embedding"]] for item in ordered]
+            if len(vectors) != expected_count or any(not vector for vector in vectors):
+                raise ValueError("embedding count or dimension mismatch")
+            if [int(item["index"]) for item in ordered] != list(range(expected_count)):
+                raise ValueError("embedding indexes are not contiguous")
+            return vectors
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise InterviewProviderError(
+                "INTERVIEW_EMBEDDING_SCHEMA_INVALID", retryable=False
+            ) from error
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        body = json.dumps(
+            {
+                "model": self._model,
+                "input": texts,
+                "encoding_format": "float",
+                "dimensions": self._dimensions,
+            },
+            ensure_ascii=False,
+        ).encode()
+        request = Request(
+            self._endpoint,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
+                payload = response.read().decode()
+        except HTTPError as error:
+            raise InterviewProviderError(
+                "INTERVIEW_EMBEDDING_UNAVAILABLE",
+                retryable=error.code == 429 or error.code >= 500,
+            ) from error
+        except (URLError, TimeoutError, ValueError) as error:
+            raise InterviewProviderError(
+                "INTERVIEW_EMBEDDING_UNAVAILABLE", retryable=True
+            ) from error
+        vectors = self.parse_embeddings(payload, len(texts))
+        if any(len(vector) != self._dimensions for vector in vectors):
+            raise InterviewProviderError("INTERVIEW_EMBEDDING_SCHEMA_INVALID", retryable=False)
+        return vectors
+
+
 class OpenAIInterviewProvider:
     _endpoint = "https://api.openai.com/v1/responses"
 
-    def __init__(self, api_key: str, model: str, timeout_seconds: int = 60) -> None:
+    def __init__(self, api_key: str, model: str, timeout_seconds: int = 120) -> None:
         self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
@@ -101,10 +180,21 @@ class OpenAIInterviewProvider:
             ) from error
 
     @staticmethod
-    def parse_questions(payload: str, question_count: int) -> InterviewQuestionResult:
+    def parse_questions(
+        payload: str,
+        question_count: int,
+        allowed_chunk_ids: set[UUID] | None = None,
+    ) -> InterviewQuestionResult:
         try:
             parsed = InterviewQuestionResult.model_validate_json(payload)
-            return parsed.validate_count(question_count)
+            parsed.validate_count(question_count)
+            if allowed_chunk_ids is not None and any(
+                source.chunk_id not in allowed_chunk_ids
+                for question in parsed.questions
+                for source in question.source_refs
+            ):
+                raise ValueError("question references evidence outside retrieval result")
+            return parsed
         except (ValidationError, ValueError) as error:
             raise InterviewProviderError(
                 "INTERVIEW_PROVIDER_SCHEMA_INVALID", retryable=False
@@ -131,7 +221,9 @@ class OpenAIInterviewProvider:
         output = self._create_response(
             instructions=(
                 f"면접 질문을 정확히 {question_count}개 생성하세요. sequence는 1부터 연속이고 "
-                "각 질문은 분석 근거와 평가 초점을 포함해야 합니다."
+                "각 질문은 제공된 evidence 내용만 근거로 삼아야 합니다. source_refs의 chunk_id는 "
+                "반드시 제공된 evidence의 chunk_id 중 하나를 그대로 사용하세요. "
+                "각 질문에는 평가 초점도 포함하세요."
             ),
             input_text=json.dumps(
                 {"analysis": analysis, "conditions": conditions},
@@ -141,7 +233,12 @@ class OpenAIInterviewProvider:
             name="interview_question_generation",
             schema=InterviewQuestionResult.model_json_schema(),
         )
-        return self.parse_questions(output, question_count)
+        chunk_ids = {
+            UUID(str(chunk["chunk_id"]))
+            for chunk in analysis.get("evidence", [])
+            if chunk.get("chunk_id")
+        }
+        return self.parse_questions(output, question_count, allowed_chunk_ids=chunk_ids)
 
     def _create_response(
         self,
@@ -157,6 +254,8 @@ class OpenAIInterviewProvider:
                 "instructions": instructions,
                 "input": input_text,
                 "store": False,
+                "reasoning": {"effort": "low"},
+                "max_output_tokens": 2000,
                 "text": {
                     "format": {
                         "type": "json_schema",
@@ -181,11 +280,22 @@ class OpenAIInterviewProvider:
             with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
                 payload = json.loads(response.read())
         except HTTPError as error:
+            request_id = error.headers.get("x-request-id") if error.headers else None
+            logger.warning(
+                "provider=openai_interview error_type=%s http_status=%s request_id=%s",
+                type(error).__name__,
+                error.code,
+                request_id or "unknown",
+            )
             raise InterviewProviderError(
                 "INTERVIEW_PROVIDER_UNAVAILABLE",
                 retryable=error.code == 429 or error.code >= 500,
             ) from error
         except (URLError, TimeoutError, ValueError) as error:
+            logger.warning(
+                "provider=openai_interview error_type=%s http_status=none request_id=unknown",
+                type(error).__name__,
+            )
             raise InterviewProviderError(
                 "INTERVIEW_PROVIDER_UNAVAILABLE", retryable=True
             ) from error
