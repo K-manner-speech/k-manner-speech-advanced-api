@@ -50,9 +50,9 @@ JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`
 
 원격 Supabase schema에 `supabase/migrations/*.sql`을 순서대로 적용하고, `.env`에
 `DATABASE_URL`, Supabase 설정, `OPENAI_API_KEY`, `OPENAI_INTERVIEW_MODEL`,
-`OPENAI_EMBEDDING_MODEL`을 채웁니다. 기본 pgvector schema는 1536차원이므로 로컬에서는
-`OPENAI_EMBEDDING_MODEL=text-embedding-3-large`, `OPENAI_EMBEDDING_DIMENSIONS=3072`를
-사용합니다.
+`OPENAI_EMBEDDING_MODEL`을 채웁니다. 현재 worker와 `document_chunks.embedding` 계약은
+3072차원이므로 로컬에서는 `OPENAI_EMBEDDING_MODEL=text-embedding-3-large`,
+`OPENAI_EMBEDDING_DIMENSIONS=3072`를 사용합니다.
 API와 문서 분석 worker는 서로 다른 PowerShell 창에서 실행해야 합니다.
 
 ```powershell
@@ -77,6 +77,8 @@ Swagger UI에서 Bearer token과 매 요청의 `Idempotency-Key`(새 UUID)를 �
 6. worker가 직무·조건 query와 유사한 문서 chunk만 검색해 질문을 생성하고, 구성 조회 결과가
    `ready`가 된 후 질문 목록 조회
 7. 면접 practice room을 생성하고 질문의 `sequence` 순서대로만 답변 전송
+
+면접 구성 생성 Job의 현행 deadline은 OpenAI 응답과 RAG 검색 시간을 포함해 180초입니다.
 
 원격 시연용 계정 값은 `.env.test.example`을 `.env.test`로 복사해 로컬에만 보관합니다.
 `.env.test`는 Git에서 제외됩니다. 시연 후 생성한 setup, document, configuration, room과

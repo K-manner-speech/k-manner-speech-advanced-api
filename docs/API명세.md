@@ -207,7 +207,7 @@ OCR은 MVP에 없다. 스캔 PDF 또는 text threshold 미달은 `422 DOCUMENT_T
 | `interview_configuration.regenerate` | `POST /api/v1/interview-configurations/{configuration_id}/regenerate` | Bearer | 필수 | `InterviewConfigurationRegenerateRequest` | `202 ConfigurationAccepted` | 401,404,409,422,429,503 | same type/target의 새 execution Job; current/상태 판정 |
 | `interview_practice_room.create` | `POST /api/v1/interview-configurations/{configuration_id}/practice-room` | Bearer | 필수 | 빈 object | `201 Room` | 401,404,409,422,503 | owner+ready+current+final questions 검증; configuration `in_progress` 전환+room 원자 생성 |
 
-Configuration generation은 Supabase pgvector에서 owner/document/version metadata prefilter 후 `top_k=5`와 평가로 정한 threshold를 적용한다. 통과 chunk가 없으면 fabrication 없이 `INSUFFICIENT_EVIDENCE`로 실패한다. 질문은 configuration당 1~10개이고 source refs를 보존한다.
+Configuration generation은 `public.document_chunks`의 3072차원 pgvector에서 owner/document/analysis/version metadata prefilter 후 최대 8개 chunk와 설정된 threshold를 적용한다. 현행 Job deadline은 180초다. 통과 chunk가 없으면 fabrication 없이 `INTERVIEW_RAG_EVIDENCE_NOT_FOUND`로 실패한다. 질문은 configuration당 1~10개이고 source refs를 보존한다.
 
 ## 5. DTO schema
 
