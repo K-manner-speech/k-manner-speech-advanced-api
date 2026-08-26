@@ -35,7 +35,12 @@ class SqlUserService:
         consent_rows = self._repository.list_active_consents(user_id)
         missing = self._missing_requirements(profile, consent_rows)
         return MeResponse(
-            profile=ProfileData.model_validate(profile),
+            profile=ProfileData(
+                display_name=profile["display_name"],
+                birth_date=profile["birth_date"],
+                gender=profile["gender"],
+                native_language=profile["native_language"],
+            ),
             display_language=profile["display_language"],
             consents=[
                 ConsentStatus(
