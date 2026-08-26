@@ -116,17 +116,22 @@ class InterviewRepository:
     def list_documents(
         self, user_id: UUID, limit: int, document_type: str | None
     ) -> list[dict[str, Any]]:
+        document_type_filter = ""
+        parameters: dict[str, object] = {"user_id": user_id, "limit": limit}
+        if document_type is not None:
+            document_type_filter = "and document_type = :document_type"
+            parameters["document_type"] = document_type
         rows = self._session.execute(
-            text("""
+            text(f"""
                 select id, setup_id, document_type, original_filename, mime_type,
                        size_bytes, version_no as version, is_current as current,
                        upload_status, analysis_status, uploaded_at
                 from public.interview_documents
                 where user_id = :user_id and is_current
-                  and (:document_type is null or document_type = :document_type)
+                  {document_type_filter}
                 order by uploaded_at desc, id desc limit :limit
             """),
-            {"user_id": user_id, "document_type": document_type, "limit": limit},
+            parameters,
         ).mappings()
         return [dict(row) for row in rows]
 
@@ -236,7 +241,10 @@ class InterviewRepository:
         row = self._session.execute(
             text("""
                 update public.interview_documents
-                set is_current = false, deleted_at = now(), updated_at = now()
+                set is_current = false,
+                    extracted_content = '{}'::jsonb,
+                    deleted_at = now(),
+                    updated_at = now()
                 where id = :document_id and user_id = :user_id and is_current
                 returning id
             """),
