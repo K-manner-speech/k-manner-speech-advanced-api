@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Annotated
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 
@@ -107,6 +109,37 @@ def test_configured_app_installs_supabase_jwks_verifier() -> None:
     verifier = app.dependency_overrides[get_token_verifier]()
 
     assert isinstance(verifier, JwksTokenVerifier)
+
+
+def test_jwt_verifier_passes_configured_clock_skew_leeway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = JwksTokenVerifier(
+        "https://project.supabase.co/auth/v1/.well-known/jwks.json",
+        "https://project.supabase.co/auth/v1",
+        "authenticated",
+        leeway_seconds=5,
+    )
+    monkeypatch.setattr(
+        verifier._jwks_client,
+        "get_signing_key_from_jwt",
+        lambda _token: SimpleNamespace(key="key", algorithm_name="RS256"),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_decode(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "sub": str(uuid4()),
+            "iss": "https://project.supabase.co/auth/v1",
+            "aud": "authenticated",
+        }
+
+    monkeypatch.setattr("app.core.auth.jwt.decode", fake_decode)
+
+    verifier.verify("token")
+
+    assert captured["leeway"] == 5, "AC-T3-JWT-LEEWAY"
 
 
 def test_framework_validation_error_uses_common_envelope() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from worker.heartbeat import HeartbeatRepository
 
 QUEUE_NAME = "document_analysis"
 DLQ_NAME = "document_analysis_dlq"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,12 +47,11 @@ class WorkerRepository(Protocol):
     def read_one(self) -> QueueMessage | None: ...
     def claim(self, job_id: UUID) -> WorkItem | None: ...
     def complete_analysis(self, item: WorkItem, result: InterviewAnalysisResult) -> bool: ...
-    def complete_configuration(
-        self, item: WorkItem, result: InterviewQuestionResult
-    ) -> bool: ...
+    def complete_configuration(self, item: WorkItem, result: InterviewQuestionResult) -> bool: ...
     def retry(self, item: WorkItem, code: str) -> None: ...
     def fail(self, item: WorkItem, code: str) -> None: ...
     def acknowledge(self, message_id: int) -> None: ...
+    def rollback(self) -> None: ...
 
 
 class DocumentAnalysisWorker:
@@ -96,6 +97,11 @@ class DocumentAnalysisWorker:
                 self._repository.fail(item, error.code)
             self._repository.acknowledge(message.message_id)
             return True
+        except Exception:
+            self._repository.rollback()
+            self._repository.fail(item, "UNEXPECTED_DOCUMENT_JOB_ERROR")
+            self._repository.acknowledge(message.message_id)
+            return True
         if not completed:
             return False
         self._repository.acknowledge(message.message_id)
@@ -110,9 +116,7 @@ class SqlDocumentAnalysisWorkerRepository:
     def read_one(self) -> QueueMessage | None:
         row = (
             self._session.execute(
-                text(
-                    "select msg_id, message from pgmq.read(:queue, :visibility_timeout, 1)"
-                ),
+                text("select msg_id, message from pgmq.read(:queue, :visibility_timeout, 1)"),
                 {
                     "queue": QUEUE_NAME,
                     "visibility_timeout": self._visibility_timeout_seconds,
@@ -295,9 +299,7 @@ class SqlDocumentAnalysisWorkerRepository:
         self._session.commit()
         return True
 
-    def complete_configuration(
-        self, item: WorkItem, result: InterviewQuestionResult
-    ) -> bool:
+    def complete_configuration(self, item: WorkItem, result: InterviewQuestionResult) -> bool:
         locked = self._session.execute(
             text(
                 """
@@ -337,9 +339,7 @@ class SqlDocumentAnalysisWorkerRepository:
                         [source.model_dump() for source in question.source_refs],
                         ensure_ascii=False,
                     ),
-                    "evaluation_focus": json.dumps(
-                        question.evaluation_focus, ensure_ascii=False
-                    ),
+                    "evaluation_focus": json.dumps(question.evaluation_focus, ensure_ascii=False),
                 },
             )
         self._session.execute(
@@ -427,6 +427,9 @@ class SqlDocumentAnalysisWorkerRepository:
         )
         self._session.commit()
 
+    def rollback(self) -> None:
+        self._session.rollback()
+
     def _succeed_job(self, job_id: UUID) -> None:
         self._session.execute(
             text(
@@ -455,7 +458,12 @@ def main() -> None:
     try:
         while True:
             heartbeat.record(worker_id, QUEUE_NAME, started_at)
-            if not worker.run_once():
+            try:
+                if not worker.run_once():
+                    time.sleep(1)
+            except Exception:
+                session.rollback()
+                LOGGER.exception("document analysis worker loop recovered from an error")
                 time.sleep(1)
     except KeyboardInterrupt:
         return

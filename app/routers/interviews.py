@@ -23,6 +23,7 @@ from app.schemas.interviews import (
 )
 from app.schemas.pagination import Page
 from app.schemas.rooms import Room
+from app.services.idempotency import IdempotencyRepository
 from app.services.interviews import MAX_DOCUMENT_BYTES, SqlInterviewService
 
 router = APIRouter(tags=["interviews"])
@@ -40,6 +41,9 @@ def get_interview_service(
         storage,
         settings.pagination_limit,
         settings.document_min_text_chars,
+        IdempotencyRepository(session),
+        settings.idempotency_lease_seconds,
+        settings.idempotency_retention_seconds,
     )
 
 

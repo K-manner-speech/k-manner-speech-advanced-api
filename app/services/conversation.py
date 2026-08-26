@@ -21,8 +21,14 @@ from app.schemas.rooms import (
     RoomDetail,
     RoomSummary,
 )
-from app.services.idempotency import validate_client_request_id
+from app.services.idempotency import (
+    IdempotencyRepository,
+    request_fingerprint,
+    validate_client_request_id,
+)
 from app.services.jobs import get_job_execution_policy
+
+ROOM_CREATE_SCOPE = "room.create"
 
 
 class ConversationService(Protocol):
@@ -57,23 +63,69 @@ class SqlConversationService:
         repository: ConversationRepository,
         maximum_page_limit: int,
         user_queue_limit: int,
+        idempotency: IdempotencyRepository | None = None,
+        idempotency_lease_seconds: int = 30,
+        idempotency_retention_seconds: int = 86400,
     ) -> None:
         self._repository = repository
         self._maximum_page_limit = maximum_page_limit
         self._user_queue_limit = user_queue_limit
+        self._idempotency = idempotency
+        self._idempotency_lease_seconds = idempotency_lease_seconds
+        self._idempotency_retention_seconds = idempotency_retention_seconds
 
     def create_room(
         self, user_id: UUID, request: RoomCreateRequest, idempotency_key: UUID
     ) -> tuple[Room, bool]:
-        del idempotency_key
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                ROOM_CREATE_SCOPE,
+                idempotency_key,
+                request_fingerprint(request.model_dump(mode="json")),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return Room.model_validate(claim.response_body), False
         existing = self._repository.find_active_room(user_id, request)
         if existing is not None:
+            if (
+                self._idempotency is not None
+                and claim is not None
+                and claim.claim_token is not None
+            ):
+                response = Room.model_validate(existing)
+                self._idempotency.complete(
+                    user_id,
+                    ROOM_CREATE_SCOPE,
+                    idempotency_key,
+                    claim.claim_token,
+                    200,
+                    response.model_dump(mode="json"),
+                    "v1",
+                    self._idempotency_retention_seconds,
+                )
+                self._repository.commit()
             return Room.model_validate(existing), False
         catalog = self._repository.validate_catalog(request)
         if catalog is None:
             raise ApiError(422, "INVALID_CATALOG_COMBINATION", "연습 조합이 유효하지 않습니다.")
         row = self._repository.create_room(user_id, request, catalog)
         room = Room.model_validate(row)
+        if self._idempotency is not None and claim is not None and claim.claim_token is not None:
+            self._idempotency.complete(
+                user_id,
+                ROOM_CREATE_SCOPE,
+                idempotency_key,
+                claim.claim_token,
+                201,
+                room.model_dump(mode="json"),
+                "v1",
+                self._idempotency_retention_seconds,
+            )
         self._repository.commit()
         return room, True
 
@@ -139,12 +191,26 @@ class SqlConversationService:
                 "CLIENT_REQUEST_ID_MISMATCH",
                 "client_request_id는 Idempotency-Key와 같아야 합니다.",
             ) from error
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                "room_message.create",
+                idempotency_key,
+                request_fingerprint(
+                    {"room_id": room_id, "request": request.model_dump(mode="json")}
+                ),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return MessageAccepted.model_validate(claim.response_body)
         policy = get_job_execution_policy("conversation_text")
         try:
             message_row, job_row = self._repository.create_message_and_job(
                 user_id, room_id, request, policy.deadline_seconds, self._user_queue_limit
             )
-            self._repository.commit()
         except LookupError as error:
             raise ApiError(404, "ROOM_NOT_FOUND", "대화방을 찾을 수 없습니다.") from error
         except RuntimeError as error:
@@ -165,10 +231,23 @@ class SqlConversationService:
                 "INTERVIEW_QUESTION_OUT_OF_ORDER",
                 "현재 순서의 면접 질문에 먼저 답변해야 합니다.",
             ) from error
-        return MessageAccepted(
+        response = MessageAccepted(
             message=self._message(message_row),
             job=JobRef(job_id=job_row["id"], type=job_row["type"], status=job_row["status"]),
         )
+        if self._idempotency is not None and claim is not None and claim.claim_token is not None:
+            self._idempotency.complete(
+                user_id,
+                "room_message.create",
+                idempotency_key,
+                claim.claim_token,
+                202,
+                response.model_dump(mode="json"),
+                "v1",
+                self._idempotency_retention_seconds,
+            )
+        self._repository.commit()
+        return response
 
     def retry_response(
         self, user_id: UUID, message_id: UUID, idempotency_key: UUID

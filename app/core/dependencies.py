@@ -51,6 +51,7 @@ class ApplicationReadinessChecker:
             checker = DatabaseReadinessChecker(
                 get_engine(),
                 settings.queue_names,
+                settings.required_worker_queues,
                 settings.worker_heartbeat_ttl_seconds,
             )
         except ApiError:

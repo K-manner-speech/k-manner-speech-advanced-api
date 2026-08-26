@@ -51,10 +51,10 @@ class IdempotencyRepository:
             text("""
                 insert into public.idempotency_records
                     (user_id, action_scope, idempotency_key, request_fingerprint,
-                     claim_token, lease_expires_at, expires_at)
+                     claim_token, lease_expires_at)
                 values
                     (:user_id, :scope, :key, :fingerprint,
-                     :claim_token, :lease_expires_at, :expires_at)
+                     :claim_token, :lease_expires_at)
                 on conflict (user_id, action_scope, idempotency_key) do nothing
                 returning id
             """),
@@ -65,7 +65,6 @@ class IdempotencyRepository:
                 "fingerprint": fingerprint,
                 "claim_token": claim_token,
                 "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                "expires_at": now + timedelta(seconds=retention_seconds),
             },
         ).first()
         if inserted is not None:
@@ -141,6 +140,7 @@ class IdempotencyRepository:
         response_status: int,
         response_body: dict[str, Any] | None,
         response_schema_version: str,
+        retention_seconds: int,
     ) -> None:
         updated = self._session.execute(
             text("""
@@ -148,7 +148,9 @@ class IdempotencyRepository:
                 set state = 'completed', response_status = :response_status,
                     response_body = cast(:response_body as jsonb),
                     response_schema_version = :schema_version,
-                    completed_at = now(), lease_expires_at = null, updated_at = now()
+                    completed_at = now(), expires_at = now() + make_interval(
+                        secs => :retention_seconds
+                    ), lease_expires_at = null, claim_token = null, updated_at = now()
                 where user_id = :user_id and action_scope = :scope
                   and idempotency_key = :key and claim_token = :claim_token
                   and state = 'in_progress'
@@ -162,6 +164,7 @@ class IdempotencyRepository:
                 "response_status": response_status,
                 "response_body": json.dumps(response_body) if response_body is not None else None,
                 "schema_version": response_schema_version,
+                "retention_seconds": retention_seconds,
             },
         ).first()
         if updated is None:

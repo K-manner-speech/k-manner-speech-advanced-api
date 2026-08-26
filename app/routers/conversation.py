@@ -20,6 +20,7 @@ from app.schemas.rooms import (
     RoomSummary,
 )
 from app.services.conversation import ConversationService, SqlConversationService
+from app.services.idempotency import IdempotencyRepository
 
 router = APIRouter(tags=["conversation"])
 
@@ -29,7 +30,12 @@ def get_conversation_service(
     settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> ConversationService:
     return SqlConversationService(
-        ConversationRepository(session), settings.pagination_limit, settings.user_queue_limit
+        ConversationRepository(session),
+        settings.pagination_limit,
+        settings.user_queue_limit,
+        IdempotencyRepository(session),
+        settings.idempotency_lease_seconds,
+        settings.idempotency_retention_seconds,
     )
 
 

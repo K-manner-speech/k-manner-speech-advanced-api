@@ -60,8 +60,9 @@ def test_interview_question_failures_are_safe_and_atomic(
 
 def test_repository_contains_atomic_interview_answer_contract() -> None:
     source = __import__("inspect").getsource(
-        __import__("app.repositories.conversation", fromlist=["ConversationRepository"])
-        .ConversationRepository.create_message_and_job
+        __import__(
+            "app.repositories.conversation", fromlist=["ConversationRepository"]
+        ).ConversationRepository.create_message_and_job
     )
 
     assert "order by q.sequence_no, q.id" in source, "AC-T5-INTERVIEW-ORDER"

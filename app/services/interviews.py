@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import zipfile
@@ -29,6 +30,7 @@ from app.schemas.interviews import (
 )
 from app.schemas.pagination import Page
 from app.schemas.rooms import Room
+from app.services.idempotency import IdempotencyRepository, request_fingerprint
 from app.services.jobs import get_job_execution_policy
 
 DOCUMENT_BUCKET = "interview-documents"
@@ -44,11 +46,17 @@ class SqlInterviewService:
         storage: StorageObjectStore,
         pagination_limit: int,
         document_min_text_chars: int,
+        idempotency: IdempotencyRepository | None = None,
+        idempotency_lease_seconds: int = 30,
+        idempotency_retention_seconds: int = 86400,
     ) -> None:
         self._repository = repository
         self._storage = storage
         self._pagination_limit = pagination_limit
         self._document_min_text_chars = document_min_text_chars
+        self._idempotency = idempotency
+        self._idempotency_lease_seconds = idempotency_lease_seconds
+        self._idempotency_retention_seconds = idempotency_retention_seconds
 
     def create_setup(
         self, user_id: UUID, request: InterviewSetupCreateRequest, key: UUID
@@ -68,13 +76,33 @@ class SqlInterviewService:
         key: UUID,
         replaced_document_id: UUID | None = None,
     ) -> InterviewDocument:
-        del key
         if not self._repository.setup_owned(user_id, setup_id):
             raise ApiError(404, "INTERVIEW_SETUP_NOT_FOUND", "면접 설정을 찾을 수 없습니다.")
         safe_name = PurePath(filename).name
         mime_type, extension, extracted_text = self._validate_and_extract(
             document_type, content_type, content
         )
+        claim = None
+        if self._idempotency is not None and replaced_document_id is None:
+            claim = self._idempotency.claim(
+                user_id,
+                "interview_document.create",
+                key,
+                request_fingerprint(
+                    {
+                        "setup_id": setup_id,
+                        "document_type": document_type,
+                        "filename": safe_name,
+                        "content_type": mime_type,
+                        "content_sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                ),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return InterviewDocument.model_validate(claim.response_body)
         path = f"{user_id}/{setup_id}/{document_type}/{uuid4()}{extension}"
         try:
             self._storage.upload(DOCUMENT_BUCKET, path, content, mime_type)
@@ -89,6 +117,23 @@ class SqlInterviewService:
                 extracted_text,
                 replaced_document_id,
             )
+            response = InterviewDocument.model_validate(row)
+            if (
+                self._idempotency is not None
+                and claim is not None
+                and claim.claim_token is not None
+            ):
+                self._idempotency.complete(
+                    user_id,
+                    "interview_document.create",
+                    key,
+                    claim.claim_token,
+                    201,
+                    response.model_dump(mode="json"),
+                    "v1",
+                    self._idempotency_retention_seconds,
+                )
+            self._repository.commit()
         except RuntimeError as error:
             raise ApiError(
                 503,
@@ -102,7 +147,7 @@ class SqlInterviewService:
             raise ApiError(
                 404, "INTERVIEW_DOCUMENT_NOT_FOUND", "교체할 문서를 찾을 수 없습니다."
             ) from error
-        return InterviewDocument.model_validate(row)
+        return response
 
     def list_documents(
         self,
@@ -137,6 +182,19 @@ class SqlInterviewService:
                 "DOCUMENT_TEXT_NOT_EXTRACTABLE",
                 "분석할 수 있는 텍스트가 충분하지 않습니다.",
             )
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                "interview_document.analyze",
+                key,
+                request_fingerprint({"document_id": document_id}),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return AnalysisAccepted.model_validate(claim.response_body)
         try:
             value = self._repository.analyze_document(
                 user_id,
@@ -149,34 +207,50 @@ class SqlInterviewService:
         if value is None:
             raise ApiError(404, "INTERVIEW_DOCUMENT_NOT_FOUND", "문서를 찾을 수 없습니다.")
         analysis, job = value
-        return AnalysisAccepted(
+        response = AnalysisAccepted(
             analysis_id=analysis["id"],
             document_id=document_id,
             document_version=analysis["version"],
             job=JobRef(job_id=job["id"], type=job["type"], status=job["status"]),
         )
+        if self._idempotency is not None and claim is not None and claim.claim_token is not None:
+            self._idempotency.complete(
+                user_id,
+                "interview_document.analyze",
+                key,
+                claim.claim_token,
+                202,
+                response.model_dump(mode="json"),
+                "v1",
+                self._idempotency_retention_seconds,
+            )
+        self._repository.commit()
+        return response
 
     def delete_document(self, user_id: UUID, document_id: UUID, key: UUID) -> None:
         del key
         document = self._repository.get_document(user_id, document_id, include_storage=True)
         if document is None or not document["current"]:
             raise ApiError(404, "INTERVIEW_DOCUMENT_NOT_FOUND", "문서를 찾을 수 없습니다.")
-        try:
-            self._storage.delete(DOCUMENT_BUCKET, document["storage_path"])
-        except RuntimeError as error:
-            raise ApiError(
-                503,
-                "STORAGE_UNAVAILABLE",
-                "원본 문서를 삭제할 수 없습니다.",
-                retryable=True,
-            ) from error
         if not self._repository.delete_document(user_id, document_id):
+            self._repository.rollback()
             raise ApiError(
                 409,
                 "DOCUMENT_STATE_CHANGED",
                 "문서 상태가 변경되었습니다.",
                 retryable=True,
             )
+        try:
+            self._storage.delete(DOCUMENT_BUCKET, document["storage_path"])
+        except RuntimeError as error:
+            self._repository.rollback()
+            raise ApiError(
+                503,
+                "STORAGE_UNAVAILABLE",
+                "원본 문서를 삭제할 수 없습니다.",
+                retryable=True,
+            ) from error
+        self._repository.commit()
 
     def get_analysis(self, user_id: UUID, analysis_id: UUID) -> InterviewAnalysis:
         row = self._repository.get_analysis(user_id, analysis_id)
@@ -192,6 +266,19 @@ class SqlInterviewService:
     ) -> ConfigurationAccepted:
         if not self._repository.setup_owned(user_id, request.setup_id):
             raise ApiError(404, "INTERVIEW_SETUP_NOT_FOUND", "면접 설정을 찾을 수 없습니다.")
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                "interview_configuration.generate",
+                key,
+                request_fingerprint(request.model_dump(mode="json")),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return ConfigurationAccepted.model_validate(claim.response_body)
         try:
             configuration, job = self._repository.create_configuration(
                 user_id,
@@ -206,11 +293,24 @@ class SqlInterviewService:
             raise ApiError(
                 422, "ANALYSIS_NOT_ELIGIBLE", "사용 가능한 최신 분석이 아닙니다."
             ) from error
-        return ConfigurationAccepted(
+        response = ConfigurationAccepted(
             configuration_id=configuration["id"],
             version_no=configuration["version_no"],
             job=JobRef(job_id=job["id"], type=job["type"], status=job["status"]),
         )
+        if self._idempotency is not None and claim is not None and claim.claim_token is not None:
+            self._idempotency.complete(
+                user_id,
+                "interview_configuration.generate",
+                key,
+                claim.claim_token,
+                202,
+                response.model_dump(mode="json"),
+                "v1",
+                self._idempotency_retention_seconds,
+            )
+        self._repository.commit()
+        return response
 
     def get_configuration(self, user_id: UUID, configuration_id: UUID) -> InterviewConfiguration:
         row = self._repository.get_configuration(user_id, configuration_id)
@@ -271,7 +371,19 @@ class SqlInterviewService:
         )
 
     def create_practice_room(self, user_id: UUID, configuration_id: UUID, key: UUID) -> Room:
-        del key
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                "interview_practice_room.create",
+                key,
+                request_fingerprint({"configuration_id": configuration_id}),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                assert claim.response_body is not None
+                return Room.model_validate(claim.response_body)
         try:
             row = self._repository.create_practice_room(user_id, configuration_id)
         except RuntimeError as error:
@@ -280,7 +392,20 @@ class SqlInterviewService:
             raise ApiError(
                 404, "INTERVIEW_CONFIGURATION_NOT_FOUND", "면접 구성을 찾을 수 없습니다."
             )
-        return Room.model_validate(row)
+        response = Room.model_validate(row)
+        if self._idempotency is not None and claim is not None and claim.claim_token is not None:
+            self._idempotency.complete(
+                user_id,
+                "interview_practice_room.create",
+                key,
+                claim.claim_token,
+                201,
+                response.model_dump(mode="json"),
+                "v1",
+                self._idempotency_retention_seconds,
+            )
+        self._repository.commit()
+        return response
 
     def _validate_and_extract(
         self, document_type: str, content_type: str, content: bytes

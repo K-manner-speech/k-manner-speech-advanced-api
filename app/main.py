@@ -49,6 +49,7 @@ def create_app(
             f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json",
             settings.supabase_jwt_issuer,
             settings.supabase_jwt_audience,
+            settings.jwt_leeway_seconds,
         )
     else:
         configured_verifier = UnconfiguredTokenVerifier()

@@ -37,9 +37,7 @@ def test_scenario_list_casts_nullable_persona_uuid() -> None:
     repository = CatalogRepository(session)  # type: ignore[arg-type]
 
     assert repository.list_scenarios(10, None) == []
-    assert (
-        "cast(:persona_id as uuid) is null" in session.statement
-    ), "AC-T1-CATALOG-NULL-UUID"
+    assert "cast(:persona_id as uuid) is null" in session.statement, "AC-T1-CATALOG-NULL-UUID"
 
 
 class CatalogRepositoryStub:

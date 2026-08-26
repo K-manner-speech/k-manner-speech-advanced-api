@@ -32,10 +32,11 @@ class TokenVerifier(Protocol):
 
 
 class JwksTokenVerifier:
-    def __init__(self, jwks_url: str, issuer: str, audience: str) -> None:
+    def __init__(self, jwks_url: str, issuer: str, audience: str, leeway_seconds: int = 0) -> None:
         self._jwks_client = PyJWKClient(jwks_url, lifespan=600)
         self._issuer = issuer
         self._audience = audience
+        self._leeway_seconds = leeway_seconds
 
     def verify(self, token: str) -> TokenClaims:
         try:
@@ -46,6 +47,7 @@ class JwksTokenVerifier:
                 algorithms=[signing_key.algorithm_name],
                 issuer=self._issuer,
                 audience=self._audience,
+                leeway=self._leeway_seconds,
                 options={"require": ["exp", "iss", "aud", "sub"]},
             )
             return TokenClaims(

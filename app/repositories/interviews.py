@@ -16,6 +16,12 @@ class InterviewRepository:
         self._session = session
         self._jobs = ConversationRepository(session)
 
+    def commit(self) -> None:
+        self._session.commit()
+
+    def rollback(self) -> None:
+        self._session.rollback()
+
     def create_setup(
         self, user_id: UUID, desired_role: str, application_type: str | None
     ) -> dict[str, Any]:
@@ -110,7 +116,6 @@ class InterviewRepository:
             .mappings()
             .one()
         )
-        self._session.commit()
         return dict(row)
 
     def list_documents(
@@ -206,7 +211,6 @@ class InterviewRepository:
             deadline_seconds,
         )
         self._jobs.enqueue("document_analysis", job["id"], user_id)
-        self._session.commit()
         return {"id": analysis["id"], "version": document["version"]}, job
 
     def get_analysis(self, user_id: UUID, analysis_id: UUID) -> dict[str, Any] | None:
@@ -265,7 +269,6 @@ class InterviewRepository:
             """),
             {"user_id": user_id, "document_id": document_id},
         )
-        self._session.commit()
         return True
 
     def _cancel_document_jobs(self, document_id: UUID) -> None:
@@ -343,7 +346,6 @@ class InterviewRepository:
             deadline_seconds,
         )
         self._jobs.enqueue("document_analysis", job["id"], user_id)
-        self._session.commit()
         return dict(row), job
 
     def regenerate_configuration(
@@ -508,5 +510,4 @@ class InterviewRepository:
             .mappings()
             .one()
         )
-        self._session.commit()
         return dict(row)

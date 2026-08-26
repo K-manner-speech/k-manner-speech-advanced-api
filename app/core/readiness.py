@@ -62,11 +62,12 @@ class DatabaseReadinessChecker:
         self,
         engine: Engine,
         queue_names: list[str],
+        required_worker_queues: list[str],
         worker_heartbeat_ttl_seconds: int,
     ) -> None:
         self._engine = engine
         self._queue_names = queue_names
-        self._base_queue_names = [name for name in queue_names if not name.endswith("_dlq")]
+        self._required_worker_queues = required_worker_queues
         self._worker_heartbeat_ttl_seconds = worker_heartbeat_ttl_seconds
 
     async def check(self) -> ReadinessReport:
@@ -116,7 +117,7 @@ class DatabaseReadinessChecker:
                         """
                     ),
                     {
-                        "queues": self._base_queue_names,
+                        "queues": self._required_worker_queues,
                         "ttl_seconds": self._worker_heartbeat_ttl_seconds,
                     },
                 ).scalar_one()
@@ -129,5 +130,5 @@ class DatabaseReadinessChecker:
             pgmq_queues=queue_count == len(self._queue_names),
             timeout_policies=policy_count == 7,
             config=True,
-            worker_heartbeat=heartbeat_count == len(self._base_queue_names),
+            worker_heartbeat=heartbeat_count == len(self._required_worker_queues),
         )
