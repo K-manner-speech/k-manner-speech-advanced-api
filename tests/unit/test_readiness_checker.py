@@ -43,6 +43,7 @@ def test_readiness_requires_fresh_heartbeat_for_each_base_queue() -> None:
             "document_analysis",
             "document_analysis_dlq",
         ],
+        ["conversation_text", "interactive_ai", "document_analysis"],
         worker_heartbeat_ttl_seconds=30,
     )
 
@@ -66,9 +67,30 @@ def test_readiness_fails_when_one_queue_has_no_fresh_worker() -> None:
             "document_analysis",
             "document_analysis_dlq",
         ],
+        ["conversation_text", "interactive_ai", "document_analysis"],
         worker_heartbeat_ttl_seconds=30,
     )
 
     report = asyncio.run(checker.check())
 
     assert report.worker_heartbeat is False
+
+
+def test_readiness_checks_only_configured_required_worker_queues() -> None:
+    checker = DatabaseReadinessChecker(
+        Engine([1, 2, 6, 7, 1]),  # type: ignore[arg-type]
+        [
+            "conversation_text",
+            "conversation_text_dlq",
+            "interactive_ai",
+            "interactive_ai_dlq",
+            "document_analysis",
+            "document_analysis_dlq",
+        ],
+        ["document_analysis"],
+        worker_heartbeat_ttl_seconds=30,
+    )
+
+    report = asyncio.run(checker.check())
+
+    assert report.worker_heartbeat is True, "AC-T2-REQUIRED-WORKERS"

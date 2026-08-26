@@ -30,6 +30,8 @@ class AppSettings(BaseSettings):
     openai_embedding_model: str
 
     queue_names: list[str]
+    required_worker_queues: list[str] = Field(default_factory=lambda: ["document_analysis"])
+    jwt_leeway_seconds: int = Field(default=5, ge=0)
     pagination_limit: int = Field(gt=0)
     user_queue_limit: int = Field(gt=0)
     worker_concurrency: int = Field(gt=0)
@@ -87,3 +89,15 @@ class AppSettings(BaseSettings):
         if model != "text-embedding-3-large":
             raise ValueError("embedding model must match the architecture contract")
         return model
+
+    @field_validator("required_worker_queues")
+    @classmethod
+    def validate_required_worker_queues(cls, queue_names: list[str]) -> list[str]:
+        allowed = {"conversation_text", "interactive_ai", "document_analysis"}
+        if not queue_names or any(not name.strip() for name in queue_names):
+            raise ValueError("required worker queues must be non-empty")
+        if len(queue_names) != len(set(queue_names)):
+            raise ValueError("required worker queues must be unique")
+        if not set(queue_names) <= allowed:
+            raise ValueError("required worker queues must be base queues")
+        return queue_names

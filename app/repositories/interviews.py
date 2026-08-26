@@ -16,6 +16,12 @@ class InterviewRepository:
         self._session = session
         self._jobs = ConversationRepository(session)
 
+    def commit(self) -> None:
+        self._session.commit()
+
+    def rollback(self) -> None:
+        self._session.rollback()
+
     def create_setup(
         self, user_id: UUID, desired_role: str, application_type: str | None
     ) -> dict[str, Any]:
@@ -37,12 +43,6 @@ class InterviewRepository:
             .one()
         )
         return dict(row)
-
-    def commit(self) -> None:
-        self._session.commit()
-
-    def rollback(self) -> None:
-        self._session.rollback()
 
     def setup_owned(self, user_id: UUID, setup_id: UUID) -> bool:
         return (
@@ -116,23 +116,27 @@ class InterviewRepository:
             .mappings()
             .one()
         )
-        self._session.commit()
         return dict(row)
 
     def list_documents(
         self, user_id: UUID, limit: int, document_type: str | None
     ) -> list[dict[str, Any]]:
+        document_type_filter = ""
+        parameters: dict[str, object] = {"user_id": user_id, "limit": limit}
+        if document_type is not None:
+            document_type_filter = "and document_type = :document_type"
+            parameters["document_type"] = document_type
         rows = self._session.execute(
-            text("""
+            text(f"""
                 select id, setup_id, document_type, original_filename, mime_type,
                        size_bytes, version_no as version, is_current as current,
                        upload_status, analysis_status, uploaded_at
                 from public.interview_documents
                 where user_id = :user_id and is_current
-                  and (:document_type is null or document_type = :document_type)
+                  {document_type_filter}
                 order by uploaded_at desc, id desc limit :limit
             """),
-            {"user_id": user_id, "document_type": document_type, "limit": limit},
+            parameters,
         ).mappings()
         return [dict(row) for row in rows]
 
@@ -207,7 +211,6 @@ class InterviewRepository:
             deadline_seconds,
         )
         self._jobs.enqueue("document_analysis", job["id"], user_id)
-        self._session.commit()
         return {"id": analysis["id"], "version": document["version"]}, job
 
     def get_analysis(self, user_id: UUID, analysis_id: UUID) -> dict[str, Any] | None:
@@ -242,7 +245,10 @@ class InterviewRepository:
         row = self._session.execute(
             text("""
                 update public.interview_documents
-                set is_current = false, deleted_at = now(), updated_at = now()
+                set is_current = false,
+                    extracted_content = '{}'::jsonb,
+                    deleted_at = now(),
+                    updated_at = now()
                 where id = :document_id and user_id = :user_id and is_current
                 returning id
             """),
@@ -264,7 +270,6 @@ class InterviewRepository:
             """),
             {"user_id": user_id, "document_id": document_id},
         )
-        self._session.commit()
         return True
 
     def _delete_document_chunks(self, user_id: UUID, document_id: UUID) -> None:
@@ -351,7 +356,6 @@ class InterviewRepository:
             deadline_seconds,
         )
         self._jobs.enqueue("document_analysis", job["id"], user_id)
-        self._session.commit()
         return dict(row), job
 
     def regenerate_configuration(
@@ -516,5 +520,4 @@ class InterviewRepository:
             .mappings()
             .one()
         )
-        self._session.commit()
         return dict(row)

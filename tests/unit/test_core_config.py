@@ -93,3 +93,26 @@ def test_worker_visibility_must_outlive_longest_job_deadline() -> None:
 
     with pytest.raises(ValidationError):
         AppSettings(_env_file=None, **values)
+
+
+def test_local_worker_and_jwt_defaults_are_safe_and_extensible() -> None:
+    settings = AppSettings(_env_file=None, **complete_settings())
+
+    assert settings.required_worker_queues == ["document_analysis"]
+    assert settings.jwt_leeway_seconds == 5
+
+    values = complete_settings()
+    values["required_worker_queues"] = ["document_analysis", "conversation_text"]
+    assert AppSettings(_env_file=None, **values).required_worker_queues == [
+        "document_analysis",
+        "conversation_text",
+    ]
+
+    values["required_worker_queues"] = ["document_analysis_dlq"]
+    with pytest.raises(ValidationError):
+        AppSettings(_env_file=None, **values)
+
+    values = complete_settings()
+    values["jwt_leeway_seconds"] = -1
+    with pytest.raises(ValidationError):
+        AppSettings(_env_file=None, **values)

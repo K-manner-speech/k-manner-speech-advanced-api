@@ -43,6 +43,7 @@ class IdempotencyRepository:
         key: UUID,
         fingerprint: bytes,
         lease_seconds: int,
+        retention_seconds: int | None = None,
     ) -> IdempotencyClaim:
         claim_token = uuid4()
         now = datetime.now(UTC)
@@ -54,7 +55,7 @@ class IdempotencyRepository:
                 values
                     (:user_id, :scope, :key, :fingerprint,
                      :claim_token, :lease_expires_at)
-                on conflict do nothing
+                on conflict (user_id, action_scope, idempotency_key) do nothing
                 returning id
             """),
             {

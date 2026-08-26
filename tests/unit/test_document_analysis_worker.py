@@ -5,6 +5,8 @@ from inspect import getsource
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
+
 from app.adapters.interview_provider import (
     InterviewAnalysisResult,
     InterviewProviderError,
@@ -58,7 +60,9 @@ class FakeRepository:
     completed: str | None = None
     retried: bool = False
     failed: bool = False
+    failed_code: str | None = None
     acknowledged: bool = False
+    rolled_back: bool = False
 
     def read_one(self) -> QueueMessage:
         return QueueMessage(message_id=10, job_id=self.item.job_id)
@@ -79,9 +83,13 @@ class FakeRepository:
 
     def fail(self, _item: WorkItem, _code: str) -> None:
         self.failed = True
+        self.failed_code = _code
 
     def acknowledge(self, _message_id: int) -> None:
         self.acknowledged = True
+
+    def rollback(self) -> None:
+        self.rolled_back = True
 
 
 def analysis_item(attempt_count: int = 1) -> WorkItem:
@@ -127,6 +135,24 @@ def test_worker_does_not_acknowledge_lost_claim() -> None:
 
     assert DocumentAnalysisWorker(repository, FakeProvider(), 3).run_once() is False
     assert repository.acknowledged is False
+
+
+def test_worker_isolates_unexpected_job_exception() -> None:
+    repository = FakeRepository(analysis_item())
+    repository.complete_analysis = lambda _item, _result: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("unexpected")
+    )
+
+    try:
+        completed = DocumentAnalysisWorker(repository, FakeProvider(), 3).run_once()
+    except RuntimeError:
+        pytest.fail("AC-T4-UNEXPECTED-ISOLATED")
+
+    assert completed is True
+    assert repository.rolled_back is True, "AC-T4-UNEXPECTED-ISOLATED"
+    assert repository.failed is True
+    assert repository.failed_code == "UNEXPECTED_DOCUMENT_JOB_ERROR"
+    assert repository.acknowledged is True
 
 
 def test_sql_worker_preserves_success_status_and_document_dlq() -> None:

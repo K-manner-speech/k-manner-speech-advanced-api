@@ -34,8 +34,13 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 
 `.env.example`의 항목을 `.env`에 채워야 합니다. 측정 대상 값에는 코드 기본값이 없으며,
 누락 시 readiness가 안전하게 `503 SERVICE_NOT_READY`를 반환합니다. Ready는 DB, `pgmq`와
-`vector` extension, 6개 queue, timeout policy 7종, 설정, base queue 3종의 worker heartbeat를
-검사합니다.
+`vector` extension, 6개 queue, timeout policy 7종, 설정을 검사합니다. Worker heartbeat는
+`REQUIRED_WORKER_QUEUES`에 지정된 base queue만 검사하며 로컬 기본값은 현재 구현된
+`["document_analysis"]`입니다. 팀원이 `conversation_text` 또는 `interactive_ai` worker를
+구현하면 해당 base queue 이름을 배열에 추가합니다. DLQ 이름은 이 설정에 넣지 않습니다.
+
+JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`로 허용합니다. 음수는
+설정 오류이며, 필요 이상으로 크게 늘리지 않습니다.
 
 현재 API에는 active Auth session 검증, 인증·온보딩·회원 탈퇴·카탈로그·대화·피드백·감정·TTS·결과·면접 문서·면접 구성·Job
 조회가 포함됩니다. Worker는 일곱 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
@@ -83,3 +88,16 @@ Swagger UI에서 Bearer token과 매 요청의 `Idempotency-Key`(새 UUID)를 �
 원격 시연용 계정 값은 `.env.test.example`을 `.env.test`로 복사해 로컬에만 보관합니다.
 `.env.test`는 Git에서 제외됩니다. 시연 후 생성한 setup, document, configuration, room과
 Storage 객체는 해당 테스트 계정 소유 데이터만 정리합니다.
+
+API와 worker가 실행 중이고 `.env.test`에 `API_BASE_URL`, `SUPABASE_TEST_EMAIL`,
+`SUPABASE_TEST_PASSWORD`가 설정되어 있다면 다음 순서로 원격 smoke와 정리를 실행합니다.
+
+```powershell
+$env:UV_CACHE_DIR='.uv-cache'
+uv run --with-requirements requirements-dev.txt python -m scripts.remote_demo_smoke
+uv run --with-requirements requirements-dev.txt python -m scripts.cleanup_remote_demo
+```
+
+Smoke 성공 표시는 `REMOTE_DEMO_OK`입니다. 정리 스크립트는 재사용 가능한 성공 분석 문서를
+보존하고, 그 외 시연 중 생성된 room, configuration, 실패·미완료 분석, job, queue message와
+Storage 객체를 정리합니다. 정리 결과는 `REMOTE_DEMO_CLEANUP_OK`로 출력됩니다.
