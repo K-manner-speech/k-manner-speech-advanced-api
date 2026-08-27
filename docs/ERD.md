@@ -322,6 +322,20 @@ erDiagram
         uuid id PK
     }
 
+    DOCUMENT_CHUNKS {
+        uuid id PK
+        uuid user_id FK
+        uuid document_id FK
+        uuid analysis_id FK
+        integer document_version
+        integer chunk_index
+        text section
+        text content
+        integer token_count
+        jsonb source_ref
+        vector_3072 embedding
+    }
+
     STORAGE_DELETION_JOBS {
         uuid id PK
         uuid user_id FK
@@ -356,6 +370,8 @@ erDiagram
     SESSION_RESULTS ||--o{ RESULT_ITEMS : contains
     SESSION_RESULTS ||--o{ INTERVIEW_EVALUATION_SCORES : evaluated_by
     INTERVIEW_DOCUMENTS o|--o{ RESULT_ITEMS : source
+    AUTH_USERS ||--o{ DOCUMENT_CHUNKS : owns
+    INTERVIEW_DOCUMENTS ||--o{ DOCUMENT_CHUNKS : chunked_into
     AUTH_USERS ||--o{ STORAGE_DELETION_JOBS : owns
 ```
 
@@ -374,6 +390,7 @@ erDiagram
 - 면접 결과에는 `pass`, `fail`, `합격`, `불합격` 등의 채용 판정을 저장할 수 없다.
 - `storage_deletion_jobs.source_id`는 여러 source type을 가리키는 논리 참조이며 FK가 아니다.
 - `processing_timeout_policies`는 처리 테이블과 FK로 연결되지 않고 `job_type` 기반 정책으로 사용된다.
+- `document_chunks`는 면접 문서 분석 시 생성되는 3072차원 embedding과 owner/document/analysis/version 근거를 저장하며 문서 삭제 시 함께 제거된다.
 
 ### 3.2 확인된 삭제 정책
 
@@ -645,7 +662,7 @@ erDiagram
 - `queued`와 terminal 상태에서는 `progress_stage`가 `NULL`이다. 처리 중에는 실제 확인 가능한 단계만 사용하며, 신뢰 가능한 총량이 있을 때만 `completed_units/total_units`를 기록한다. 시간 경과 기반 가짜 백분율은 만들지 않는다.
 - terminal Job은 불변이다. 실패에는 공개 가능한 `error_code`, `error_retryable`, allowlist `error_meta`만 저장한다. Provider 원문·프롬프트·응답·stack trace는 저장하지 않는다.
 - API의 `result_resource`는 성공 시 target 관계에서 `{type, id}`로 파생한다. 결과 본문과 URL은 Job row에 복제하지 않는다.
-- timeout policy key는 위 canonical `job_type`을 사용한다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`은 180초, `session_result_generation`은 60초 deadline을 사용하며 최대 3회 시도한다.
 
 ### 5.2 진행 단계 허용 목록
 
