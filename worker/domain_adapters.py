@@ -320,7 +320,7 @@ class ConversationAdapter:
                 """
                 insert into public.message_audio
                     (message_id, audio_type, storage_path, generation_status, deadline_at)
-                values (:message_id, 'tts', :storage_path, 'processing',
+                values (:message_id, 'persona_tts', :storage_path, 'processing',
                         now() + make_interval(secs => :deadline_seconds))
                 returning id
                 """

@@ -22,7 +22,7 @@ class StubMediaService:
             status="ready",
             signed_url="https://storage.example/signed",
             expires_at=datetime.now(UTC),
-            audio_type="tts",
+            audio_type="persona_tts",
         )
 
     def retry_tts(self, authenticated_user_id: Any, message_id: Any, key: Any) -> Any:
