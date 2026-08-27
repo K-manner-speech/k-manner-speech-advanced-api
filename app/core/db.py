@@ -11,7 +11,13 @@ def create_database_engine(settings: AppSettings) -> Engine:
     if not parsed_url.drivername.startswith("postgresql"):
         raise ValueError("DATABASE_URL must use Postgres")
     sync_url = parsed_url.set(drivername="postgresql+psycopg")
-    return create_engine(sync_url, pool_pre_ping=True)
+    return create_engine(
+        sync_url,
+        pool_pre_ping=True,
+        pool_size=2,
+        max_overflow=1,
+        connect_args={"prepare_threshold": None},
+    )
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
