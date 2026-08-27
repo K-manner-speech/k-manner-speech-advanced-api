@@ -711,7 +711,8 @@ class TTSAdapter:
             session.execute(
                 text(
                     """
-                    select a.id, a.processing_token, a.storage_path, m.content
+                    select a.id, a.processing_token, a.storage_path, m.content,
+                           m.persona_emotion
                     from public.message_audio a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -731,7 +732,11 @@ class TTSAdapter:
             target_id,
             row["processing_token"],
             "provider_processing",
-            {"text": row["content"], "storage_path": row["storage_path"]},
+            {
+                "text": row["content"],
+                "emotion": row["persona_emotion"] or "neutral",
+                "storage_path": row["storage_path"],
+            },
         )
 
     def complete(self, session: Session, item: ClaimedJob, output: object) -> bool:
@@ -1084,17 +1089,11 @@ class SessionResultAdapter:
                 text(
                     """
                     select s.id, s.room_id, r.practice_type, r.title,
-                           r.interview_configuration_id,
-                           coalesce(avg(f.overall_score), 0) as average_feedback_score
+                           r.interview_configuration_id
                     from public.session_results s
                     join public.practice_rooms r on r.id = s.room_id
-                    left join public.room_messages m on m.room_id = r.id
-                    left join public.turn_feedback f on f.message_id = m.id
-                      and f.analysis_status = 'ready'
                     where s.id = :target_id and s.result_status = 'processing'
                       and s.user_id = :user_id and r.user_id = :user_id
-                    group by s.id, s.room_id, r.practice_type, r.title,
-                             r.interview_configuration_id
                     for update of s
                     """
                 ),
@@ -1105,6 +1104,18 @@ class SessionResultAdapter:
         )
         if row is None:
             return None
+        average_feedback_score = session.execute(
+            text(
+                """
+                select coalesce(avg(f.overall_score), 0)
+                from public.room_messages m
+                join public.turn_feedback f on f.message_id = m.id
+                  and f.analysis_status = 'ready'
+                where m.room_id = :room_id
+                """
+            ),
+            {"room_id": row["room_id"]},
+        ).scalar_one()
         messages = list(
             session.execute(
                 text(
@@ -1135,7 +1146,7 @@ class SessionResultAdapter:
                 else None,
                 "messages": [dict(message) for message in messages],
                 "general_overall_score": int(
-                    Decimal(row["average_feedback_score"] or 0).quantize(Decimal("1"))
+                    Decimal(average_feedback_score or 0).quantize(Decimal("1"))
                 ),
             },
         )

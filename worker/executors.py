@@ -217,7 +217,9 @@ class WorkerExecutors:
     def _tts(self, item: ClaimedJob, _suffix: str) -> TTSOutput:
         return TTSOutput(
             wav=self._gemini_tts.synthesize(
-                str(item.payload["text"]), str(item.payload.get("voice", "Kore"))
+                str(item.payload["text"]),
+                str(item.payload.get("voice", "Kore")),
+                str(item.payload.get("emotion", "neutral")),
             ),
             storage_path=str(item.payload["storage_path"]),
         )

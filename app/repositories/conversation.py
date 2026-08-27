@@ -212,8 +212,17 @@ class ConversationRepository:
                 select m.id, m.room_id, m.sequence_no, m.sender_type, m.content,
                        m.input_mode, m.delivery_status, m.reply_to_message_id,
                        m.created_at, m.updated_at,
-                       e.processing_status as emotion_status,
-                       e.emotion_label, e.reasoning
+                       case
+                           when m.sender_type = 'persona' and m.persona_emotion is not null
+                           then 'succeeded'
+                           else e.processing_status
+                       end as emotion_status,
+                       case
+                           when m.sender_type = 'persona' then m.persona_emotion
+                           else e.emotion_label
+                       end as emotion_label,
+                       case when m.sender_type = 'persona' then null else e.reasoning end
+                           as reasoning
                 from public.room_messages m
                 left join public.message_emotion_analysis e on e.message_id = m.id
                 where m.room_id = :room_id
