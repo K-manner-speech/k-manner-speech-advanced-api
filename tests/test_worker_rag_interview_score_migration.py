@@ -13,8 +13,10 @@ def test_migration_creates_owner_version_scoped_vector_chunks() -> None:
     sql = migration_sql()
 
     assert "create table public.document_chunks" in sql
-    assert "embedding vector(3072)" in sql
-    assert "(embedding::halfvec(3072)) halfvec_cosine_ops" in sql
+    assert "embedding extensions.vector(3072)" in sql
+    assert (
+        "(embedding::extensions.halfvec(3072)) extensions.halfvec_cosine_ops" in sql
+    )
     assert "user_id uuid not null" in sql
     assert "document_id uuid not null" in sql
     assert "document_version integer not null" in sql

@@ -31,7 +31,13 @@ class AppSettings(BaseSettings):
     openai_embedding_dimensions: int = Field(default=3072, gt=0)
 
     queue_names: list[str]
-    required_worker_queues: list[str] = Field(default_factory=lambda: ["document_analysis"])
+    required_worker_queues: list[str] = Field(
+        default_factory=lambda: [
+            "conversation_text",
+            "interactive_ai",
+            "document_analysis",
+        ]
+    )
     jwt_leeway_seconds: int = Field(default=5, ge=0)
     pagination_limit: int = Field(gt=0)
     user_queue_limit: int = Field(gt=0)

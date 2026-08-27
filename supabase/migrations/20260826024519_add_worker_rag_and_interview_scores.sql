@@ -9,7 +9,7 @@ create table public.document_chunks (
   content text not null check (length(btrim(content)) > 0),
   token_count integer not null check (token_count > 0),
   source_ref jsonb not null default '{}'::jsonb,
-  embedding vector(3072) not null,
+  embedding extensions.vector(3072) not null,
   created_at timestamptz not null default now(),
   unique (document_id, document_version, chunk_index)
 );
@@ -19,7 +19,7 @@ create index document_chunks_owner_version_idx
 
 create index document_chunks_embedding_cosine_idx
   on public.document_chunks using hnsw
-  ((embedding::halfvec(3072)) halfvec_cosine_ops);
+  ((embedding::extensions.halfvec(3072)) extensions.halfvec_cosine_ops);
 
 alter table public.document_chunks enable row level security;
 revoke all on table public.document_chunks from anon, authenticated;
