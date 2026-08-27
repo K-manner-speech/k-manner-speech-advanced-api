@@ -58,7 +58,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
             settings.supabase_service_role_key.get_secret_value(),
         )
         all_adapters: dict[JobType, SqlDomainAdapter] = {
-            JobType.CONVERSATION_TEXT: ConversationAdapter(),
+            JobType.CONVERSATION_TEXT: ConversationAdapter(storage),
             JobType.EMOTION_ANALYSIS: EmotionAdapter(),
             JobType.TTS_GENERATION: TTSAdapter(storage),
             JobType.TURN_FEEDBACK: FeedbackAdapter(),

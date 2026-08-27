@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from sqlalchemy.orm import Session
 
 from app.adapters.storage import SupabaseStorageSigner
@@ -69,3 +69,24 @@ def repeat(
     key: Annotated[UUID, Header(alias="Idempotency-Key")],
 ) -> MessageAccepted:
     return service.repeat(user.id, message_id, request, key)
+
+
+@router.post(
+    "/rooms/{room_id}/voice-messages",
+    operation_id="room_voice_message.create",
+    response_model=MessageAccepted,
+    status_code=202,
+)
+def create_voice_message(
+    room_id: UUID,
+    transcript: Annotated[str, Form()],
+    audio: Annotated[UploadFile, File()],
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[MediaService, Depends(get_media_service)],
+    key: Annotated[UUID, Header(alias="Idempotency-Key")],
+    current_interview_question_id: Annotated[UUID | None, Form()] = None,
+) -> MessageAccepted:
+    return service.upload_voice_message(
+        user.id, room_id, transcript, current_interview_question_id,
+        audio.file.read(10 * 1024 * 1024 + 1), audio.content_type or "", key,
+    )

@@ -81,6 +81,9 @@ def _insert_job(
 class ConversationAdapter:
     job_type = JobType.CONVERSATION_TEXT
 
+    def __init__(self, storage: StorageObjectStore | None = None) -> None:
+        self._storage = storage
+
     def claim(self, session: Session, job: Mapping[str, Any]) -> TargetClaim | None:
         target_id = _target_id(job, self.job_type)
         row = (
@@ -92,13 +95,16 @@ class ConversationAdapter:
                            r.persona_id, r.scenario_id, r.interview_configuration_id,
                            p.name as persona_name, p.role_title, s.goal as scenario_goal,
                            coalesce(c.summary_text, '') as context_summary,
-                           c.summarized_through_message_id
+                           c.summarized_through_message_id,
+                           recording.storage_path as recording_path
                     from public.message_ai_processing a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
                     left join public.personas p on p.id = r.persona_id
                     left join public.scenarios s on s.id = r.scenario_id
                     left join public.room_contexts c on c.room_id = r.id
+                    left join public.message_audio recording on recording.message_id = m.id
+                      and recording.audio_type = 'user_recording' and recording.is_current
                     where a.id = :target_id and a.processing_status = 'processing'
                       and r.user_id = :user_id and r.status = 'in_progress'
                     for update of a, r
@@ -150,6 +156,14 @@ class ConversationAdapter:
             "messages": [dict(message) for message in messages],
             "current_user_message_id": str(row["message_id"]),
         }
+        if row.get("recording_path") and self._storage is not None:
+            path = str(row["recording_path"])
+            payload["audio_bytes"] = self._storage.download("message-audio", path)
+            payload["audio_mime_type"] = (
+                "audio/webm" if path.endswith(".webm") else
+                "audio/ogg" if path.endswith(".ogg") else
+                "audio/mp4" if path.endswith(".mp4") else "audio/wav"
+            )
         return TargetClaim(
             target_id=target_id,
             processing_token=row["processing_token"],

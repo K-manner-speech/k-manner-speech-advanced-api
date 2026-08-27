@@ -187,14 +187,22 @@ class WorkerExecutors:
                     "messages": recent,
                 }
                 input_text = json.dumps(compact_payload, ensure_ascii=False, default=str)
-        reply = self._gemini_chat.generate_structured(
-            instructions=(
+        generation_kwargs: dict[str, object] = {
+            "instructions": (
                 "한국어 대화 연습 상대 역할을 유지하고, 제공된 사실만 사용해 자연스럽게 한 번 "
-                "응답하세요. summary 필드는 null로 반환하세요." + suffix
+                "응답하세요. 사용자 말을 들은 페르소나의 입장에서 느끼는 감정을 판단해 "
+                "persona_emotion에 여섯 고정 label 중 하나로 반환하세요. 음성이 첨부되면 문장뿐 "
+                "아니라 톤·속도·강세도 참고하세요. summary 필드는 null로 반환하세요." + suffix
             ),
-            input_text=input_text,
-            schema_name="conversation_reply",
-            result_type=ConversationReply,
+            "input_text": input_text,
+            "schema_name": "conversation_reply",
+            "result_type": ConversationReply,
+        }
+        if item.payload.get("audio_bytes") is not None:
+            generation_kwargs["audio_bytes"] = item.payload["audio_bytes"]
+            generation_kwargs["audio_mime_type"] = item.payload.get("audio_mime_type")
+        reply: ConversationReply = self._gemini_chat.generate_structured(
+            **generation_kwargs,  # type: ignore[arg-type]
         )
         return ConversationOutput(
             reply=reply,

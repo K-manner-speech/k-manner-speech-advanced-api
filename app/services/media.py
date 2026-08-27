@@ -1,13 +1,13 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.adapters.storage import StorageSigner
+from app.adapters.storage import StorageObjectStore
 from app.core.errors import ApiError
 from app.repositories.media import MediaRepository
 from app.schemas.common import DomainRef, JobRef
 from app.schemas.jobs import DomainJobAccepted
 from app.schemas.media import AudioAccessResponse, RepeatRequest
-from app.schemas.rooms import Message, MessageAccepted
+from app.schemas.rooms import Message, MessageAccepted, MessageCreateRequest
 from app.services.jobs import get_job_execution_policy
 
 
@@ -19,11 +19,15 @@ class MediaService(Protocol):
     def repeat(
         self, authenticated_user_id: UUID, message_id: UUID, request: RepeatRequest, key: UUID
     ) -> MessageAccepted: ...
+    def upload_voice_message(
+        self, authenticated_user_id: UUID, room_id: UUID, transcript: str,
+        current_question_id: UUID | None, audio: bytes, content_type: str, key: UUID,
+    ) -> MessageAccepted: ...
 
 
 class SqlMediaService:
     def __init__(
-        self, repository: MediaRepository, signer: StorageSigner, user_queue_limit: int
+        self, repository: MediaRepository, signer: StorageObjectStore, user_queue_limit: int
     ) -> None:
         self._repository = repository
         self._signer = signer
@@ -93,5 +97,48 @@ class SqlMediaService:
         message, job = value
         return MessageAccepted(
             message=Message.model_validate(message),
+            job=JobRef(job_id=job["id"], type=job["type"], status=job["status"]),
+        )
+
+    def upload_voice_message(
+        self, authenticated_user_id: UUID, room_id: UUID, transcript: str,
+        current_question_id: UUID | None, audio: bytes, content_type: str, key: UUID,
+    ) -> MessageAccepted:
+        normalized = transcript.strip()
+        allowed = {
+            "audio/webm": "webm", "audio/ogg": "ogg",
+            "audio/mp4": "mp4", "audio/wav": "wav",
+        }
+        if not normalized:
+            raise ApiError(422, "VOICE_TRANSCRIPT_EMPTY", "음성 인식 문장이 비어 있습니다.")
+        if content_type not in allowed:
+            raise ApiError(422, "VOICE_AUDIO_TYPE_INVALID", "지원하지 않는 음성 형식입니다.")
+        if not audio or len(audio) > 10 * 1024 * 1024:
+            raise ApiError(422, "VOICE_AUDIO_SIZE_INVALID", "음성 파일은 10MB 이하여야 합니다.")
+        path = f"{authenticated_user_id}/{room_id}/{key}.{allowed[content_type]}"
+        try:
+            self._signer.upload("message-audio", path, audio, content_type)
+        except RuntimeError as error:
+            raise ApiError(
+                503,
+                "STORAGE_UNAVAILABLE",
+                "음성을 저장할 수 없습니다.",
+                retryable=True,
+            ) from error
+        request = MessageCreateRequest(
+            content=normalized, input_mode="voice",
+            current_interview_question_id=current_question_id, client_request_id=key,
+        )
+        try:
+            message, job = self._repository.create_voice_message(
+                authenticated_user_id, room_id, request, path,
+                get_job_execution_policy("conversation_text").deadline_seconds,
+                self._user_queue_limit,
+            )
+        except Exception:
+            self._signer.delete("message-audio", path)
+            raise
+        return MessageAccepted(
+            message=Message.model_validate({**message, "emotion": None}),
             job=JobRef(job_id=job["id"], type=job["type"], status=job["status"]),
         )

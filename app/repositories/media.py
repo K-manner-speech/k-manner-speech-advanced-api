@@ -126,3 +126,27 @@ class MediaRepository:
             deadline_seconds,
             user_queue_limit,
         )
+
+    def create_voice_message(
+        self,
+        user_id: UUID,
+        room_id: UUID,
+        request: MessageCreateRequest,
+        storage_path: str,
+        deadline_seconds: int,
+        user_queue_limit: int,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        message, job = self._jobs.create_message_and_job(
+            user_id, room_id, request, deadline_seconds, user_queue_limit
+        )
+        self._session.execute(
+            text("""
+                insert into public.message_audio
+                    (message_id, audio_type, storage_path, generation_status, is_current,
+                     completed_at, deadline_at)
+                values (:message_id, 'user_recording', :storage_path, 'ready', true, now(), now())
+            """),
+            {"message_id": message["id"], "storage_path": storage_path},
+        )
+        self._session.commit()
+        return message, job

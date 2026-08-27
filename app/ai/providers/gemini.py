@@ -50,17 +50,25 @@ class GeminiStructuredClient:
         input_text: str,
         schema_name: str,
         result_type: type[ResultModel],
+        audio_bytes: bytes | None = None,
+        audio_mime_type: str | None = None,
     ) -> ResultModel:
         del schema_name
         endpoint = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self._model}:generateContent"
         )
+        parts: list[dict[str, Any]] = [{"text": input_text}]
+        if audio_bytes is not None and audio_mime_type is not None:
+            parts.append({"inlineData": {
+                "mimeType": audio_mime_type,
+                "data": base64.b64encode(audio_bytes).decode(),
+            }})
         payload = post_json(
             endpoint,
             {
                 "systemInstruction": {"parts": [{"text": instructions}]},
-                "contents": [{"role": "user", "parts": [{"text": input_text}]}],
+                "contents": [{"role": "user", "parts": parts}],
                 "generationConfig": {
                     "responseMimeType": "application/json",
                     "responseJsonSchema": result_type.model_json_schema(),

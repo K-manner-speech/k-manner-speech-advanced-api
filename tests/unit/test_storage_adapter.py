@@ -1,12 +1,58 @@
 from __future__ import annotations
 
 import io
+import json
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
 import app.adapters.storage as storage_module
 from app.adapters.storage import SupabaseStorageSigner
+
+
+def test_create_signed_url_adds_storage_api_prefix_to_relative_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def signed_response(request: Request, **_kwargs: object) -> io.BytesIO:
+        assert request.full_url.endswith(
+            "/storage/v1/object/sign/message-audio/user/room/audio.wav"
+        )
+        return io.BytesIO(
+            json.dumps(
+                {"signedURL": "/object/sign/message-audio/user/room/audio.wav?token=test-token"}
+            ).encode()
+        )
+
+    monkeypatch.setattr(storage_module, "urlopen", signed_response)
+    storage = SupabaseStorageSigner("https://project.supabase.co", "service-role-key")
+
+    signed_url, _ = storage.create_signed_url(
+        "message-audio", "user/room/audio.wav", 300
+    )
+
+    assert signed_url == (
+        "https://project.supabase.co/storage/v1/object/sign/"
+        "message-audio/user/room/audio.wav?token=test-token"
+    )
+
+
+def test_create_signed_url_preserves_absolute_provider_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_url = "https://cdn.example.test/audio.wav?token=test-token"
+
+    def signed_response(*_args: object, **_kwargs: object) -> io.BytesIO:
+        return io.BytesIO(json.dumps({"signedURL": provider_url}).encode())
+
+    monkeypatch.setattr(storage_module, "urlopen", signed_response)
+    storage = SupabaseStorageSigner("https://project.supabase.co", "service-role-key")
+
+    signed_url, _ = storage.create_signed_url(
+        "message-audio", "user/room/audio.wav", 300
+    )
+
+    assert signed_url == provider_url
 
 
 def test_delete_treats_missing_storage_object_as_already_deleted(

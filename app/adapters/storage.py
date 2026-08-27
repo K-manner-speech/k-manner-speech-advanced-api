@@ -16,6 +16,7 @@ class StorageSigner(Protocol):
 
 class StorageObjectStore(StorageSigner, Protocol):
     def upload(self, bucket: str, path: str, content: bytes, content_type: str) -> None: ...
+    def download(self, bucket: str, path: str) -> bytes: ...
     def delete(self, bucket: str, path: str) -> None: ...
 
 
@@ -47,8 +48,8 @@ class SupabaseStorageSigner:
         signed_path = payload.get("signedURL") or payload.get("signedUrl")
         if not isinstance(signed_path, str):
             raise RuntimeError("storage signing response is invalid")
-        signed_url = (
-            signed_path if signed_path.startswith("http") else f"{self._base_url}{signed_path}"
+        signed_url = signed_path if signed_path.startswith("http") else (
+            f"{self._base_url}/storage/v1{signed_path}"
         )
         return signed_url, datetime.now(UTC) + timedelta(seconds=expires_in)
 
@@ -63,6 +64,20 @@ class SupabaseStorageSigner:
             f"{self._base_url}/storage/v1/object/{quote(bucket, safe='')}/{quote(path, safe='/')}"
         )
         self._send(endpoint, "DELETE", None, None)
+
+    def download(self, bucket: str, path: str) -> bytes:
+        endpoint = (
+            f"{self._base_url}/storage/v1/object/{quote(bucket, safe='')}/{quote(path, safe='/')}"
+        )
+        request = Request(endpoint, headers={
+            "Authorization": f"Bearer {self._service_role_key}",
+            "apikey": self._service_role_key,
+        })
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                return bytes(response.read())
+        except (HTTPError, URLError, TimeoutError) as error:
+            raise RuntimeError("storage object operation failed") from error
 
     def _send(
         self,
