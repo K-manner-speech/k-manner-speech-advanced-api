@@ -36,8 +36,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 누락 시 readiness가 안전하게 `503 SERVICE_NOT_READY`를 반환합니다. Ready는 DB, `pgmq`와
 `vector` extension, 6개 queue, timeout policy 7종, 설정을 검사합니다. Worker heartbeat는
 `REQUIRED_WORKER_QUEUES`에 지정된 base queue만 검사하며 로컬 기본값은 현재 구현된
-`["document_analysis"]`입니다. 팀원이 `conversation_text` 또는 `interactive_ai` worker를
-구현하면 해당 base queue 이름을 배열에 추가합니다. DLQ 이름은 이 설정에 넣지 않습니다.
+`["conversation_text","interactive_ai","document_analysis"]`입니다. 세 worker를 모두
+실행해야 readiness가 통과하며, DLQ 이름은 이 설정에 넣지 않습니다.
 
 JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`로 허용합니다. 음수는
 설정 오류이며, 필요 이상으로 크게 늘리지 않습니다.

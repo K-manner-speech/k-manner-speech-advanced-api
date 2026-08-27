@@ -98,7 +98,11 @@ def test_worker_visibility_must_outlive_longest_job_deadline() -> None:
 def test_local_worker_and_jwt_defaults_are_safe_and_extensible() -> None:
     settings = AppSettings(_env_file=None, **complete_settings())
 
-    assert settings.required_worker_queues == ["document_analysis"]
+    assert settings.required_worker_queues == [
+        "conversation_text",
+        "interactive_ai",
+        "document_analysis",
+    ]
     assert settings.jwt_leeway_seconds == 5
 
     values = complete_settings()

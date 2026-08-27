@@ -6,7 +6,7 @@ def test_readme_documents_local_worker_and_remote_cleanup() -> None:
 
     for required in (
         "REQUIRED_WORKER_QUEUES",
-        '["document_analysis"]',
+        '["conversation_text","interactive_ai","document_analysis"]',
         "JWT_LEEWAY_SECONDS=5",
         "scripts.remote_demo_smoke",
         "scripts.cleanup_remote_demo",
