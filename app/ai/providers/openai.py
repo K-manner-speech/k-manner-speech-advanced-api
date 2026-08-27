@@ -14,10 +14,20 @@ class OpenAIResponsesClient:
     _responses_endpoint = "https://api.openai.com/v1/responses"
     _embeddings_endpoint = "https://api.openai.com/v1/embeddings"
 
-    def __init__(self, api_key: str, model: str, timeout_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout_seconds: int = 60,
+        *,
+        reasoning_effort: str = "low",
+        max_output_tokens: int = 2000,
+    ) -> None:
         self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._reasoning_effort = reasoning_effort
+        self._max_output_tokens = max_output_tokens
 
     def structured_request_body(
         self,
@@ -32,6 +42,8 @@ class OpenAIResponsesClient:
             "instructions": instructions,
             "input": input_text,
             "store": False,
+            "reasoning": {"effort": self._reasoning_effort},
+            "max_output_tokens": self._max_output_tokens,
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -60,6 +72,7 @@ class OpenAIResponsesClient:
             ),
             {"Authorization": f"Bearer {self._api_key}"},
             self._timeout_seconds,
+            provider="openai_responses",
         )
         output_text = self._extract_output_text(payload)
         try:
@@ -87,19 +100,33 @@ class OpenAIResponsesClient:
 class OpenAIEmbeddingClient:
     _endpoint = "https://api.openai.com/v1/embeddings"
 
-    def __init__(self, api_key: str, model: str, timeout_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout_seconds: int = 60,
+        *,
+        dimensions: int = 3072,
+    ) -> None:
         self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._dimensions = dimensions
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts or any(not text.strip() for text in texts):
             raise ValueError("embedding input must contain non-empty text")
         payload = post_json(
             self._endpoint,
-            {"model": self._model, "input": texts, "encoding_format": "float"},
+            {
+                "model": self._model,
+                "input": texts,
+                "encoding_format": "float",
+                "dimensions": self._dimensions,
+            },
             {"Authorization": f"Bearer {self._api_key}"},
             self._timeout_seconds,
+            provider="openai_embeddings",
         )
         try:
             ordered = sorted(payload["data"], key=lambda item: item["index"])
@@ -108,6 +135,8 @@ class OpenAIEmbeddingClient:
                 not isinstance(vector, list) or not vector for vector in embeddings
             ):
                 raise ValueError("embedding count mismatch")
+            if any(len(vector) != self._dimensions for vector in embeddings):
+                raise ValueError("embedding dimension mismatch")
             return embeddings
         except (KeyError, TypeError, ValueError) as error:
             raise AIProviderError(

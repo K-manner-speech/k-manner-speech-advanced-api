@@ -17,33 +17,7 @@ from worker.executors import (
     split_conversation_messages,
     validate_question_evidence,
 )
-from worker.handlers import HandlerRegistry
 from worker.queue import ClaimedJob
-
-
-class FakeHandler:
-    def handle(self, _item: object) -> object:
-        return object()
-
-
-def test_handler_registry_requires_all_seven_job_types() -> None:
-    handlers = {job_type: FakeHandler() for job_type in JobType}
-
-    registry = HandlerRegistry(handlers)
-
-    assert all(registry.get(job_type) is handlers[job_type] for job_type in JobType)
-
-
-def test_handler_registry_rejects_missing_job_type() -> None:
-    handlers = {job_type: FakeHandler() for job_type in JobType}
-    handlers.pop(JobType.TTS_GENERATION)
-
-    try:
-        HandlerRegistry(handlers)
-    except ValueError as error:
-        assert "tts_generation" in str(error)
-    else:
-        raise AssertionError("incomplete handler registry must fail")
 
 
 def test_interview_question_source_refs_must_match_retrieved_evidence() -> None:

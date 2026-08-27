@@ -170,4 +170,4 @@ class InterviewEvaluation(ContractModel):
 class SessionResultOutput(ContractModel):
     summary: str | None
     items: list[ResultItemOutput]
-    interview_scores: list[InterviewEvaluationScore] = Field(default_factory=list)
+    interview_scores: list[InterviewEvaluationScore]

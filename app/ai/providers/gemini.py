@@ -29,6 +29,7 @@ class GeminiStructuredClient:
             {"contents": [{"parts": [{"text": text}]}]},
             {"x-goog-api-key": self._api_key},
             self._timeout_seconds,
+            provider="gemini_count_tokens",
         )
         try:
             total = int(payload["totalTokens"])
@@ -67,6 +68,7 @@ class GeminiStructuredClient:
             },
             {"x-goog-api-key": self._api_key},
             self._timeout_seconds,
+            provider="gemini_structured",
         )
         try:
             output = payload["candidates"][0]["content"]["parts"][0]["text"]
@@ -99,6 +101,7 @@ class GeminiSpeechClient:
                 "Api-Revision": "2026-05-20",
             },
             self._timeout_seconds,
+            provider="gemini_speech",
         )
         encoded = _find_audio_data(payload)
         try:

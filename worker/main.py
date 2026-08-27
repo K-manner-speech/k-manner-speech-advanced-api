@@ -109,6 +109,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
                 settings.openai_api_key.get_secret_value(),
                 settings.openai_embedding_model,
                 60,
+                dimensions=settings.openai_embedding_dimensions,
             ),
             evidence_retriever=SqlEvidenceRetriever(session_factory),
             rag_threshold=settings.rag_similarity_threshold,
