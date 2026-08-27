@@ -30,11 +30,21 @@ class SqlFeedbackService:
         error = None
         if row["error_code"]:
             error = FeedbackSafeError(code=row["error_code"], retryable=True)
+        scores = [
+            {
+                **score,
+                "score": int(score["score"]),
+                "max_score": int(score["max_score"]),
+            }
+            for score in row["scores"]
+        ]
         return FeedbackResponse(
             status=row["status"],
-            overall_score=row["overall_score"],
+            overall_score=(
+                int(row["overall_score"]) if row["overall_score"] is not None else None
+            ),
             summary=row["summary"],
-            scores=row["scores"],
+            scores=scores,
             emotions=row["emotions"],
             error=error,
         )
