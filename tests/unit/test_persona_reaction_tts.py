@@ -17,7 +17,7 @@ class RecordingSpeechProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
-    def synthesize(self, text: str, voice: str, emotion: str) -> bytes:
+    def synthesize(self, text: str, voice: str, emotion: str, style: str = "") -> bytes:
         self.calls.append((text, voice, emotion))
         return b"wav"
 
@@ -62,7 +62,7 @@ def test_tts_executor_passes_persona_reaction_to_speech_provider() -> None:
     assert speech.calls == [("괜찮습니다.", "Kore", "embarrassment")]
 
 
-def test_tts_claim_reads_persisted_persona_reaction() -> None:
+def _tts_claim(voice_key: str | None, voice_style: str | None) -> object:
     session = MagicMock()
     session.execute.return_value.mappings.return_value.one_or_none.return_value = {
         "id": uuid4(),
@@ -70,16 +70,39 @@ def test_tts_claim_reads_persisted_persona_reaction() -> None:
         "storage_path": "owner/room/message.wav",
         "content": "알겠습니다.",
         "persona_emotion": "curious",
+        "voice_key": voice_key,
+        "voice_style": voice_style,
     }
-
     claim = TTSAdapter(MagicMock()).claim(
         session,
         {"message_audio_id": uuid4(), "user_id": uuid4()},
     )
+    return claim, session
+
+
+def test_tts_claim_reads_persisted_persona_reaction() -> None:
+    claim, session = _tts_claim(None, None)
 
     assert claim is not None
     assert claim.payload["emotion"] == "curious"
     assert "m.persona_emotion" in str(session.execute.call_args.args[0])
+
+
+def test_tts_claim_omits_voice_keys_when_persona_has_no_voice_settings() -> None:
+    claim, _ = _tts_claim(None, None)
+
+    assert claim is not None
+    assert "voice" not in claim.payload
+    assert "voice_style" not in claim.payload
+
+
+def test_tts_claim_carries_persona_voice_settings() -> None:
+    claim, session = _tts_claim("Achird", "20대 초반 남자 대학생이 편하게 말하듯")
+
+    assert claim is not None
+    assert claim.payload["voice"] == "Achird"
+    assert claim.payload["voice_style"] == "20대 초반 남자 대학생이 편하게 말하듯"
+    assert "p.voice_key" in str(session.execute.call_args.args[0])
 
 
 def test_message_list_query_exposes_persona_reaction_as_emotion_snapshot() -> None:

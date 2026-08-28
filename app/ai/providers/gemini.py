@@ -95,7 +95,7 @@ class GeminiSpeechClient:
         self._model = model
         self._timeout_seconds = timeout_seconds
 
-    def synthesize(self, text: str, voice: str, emotion: str) -> bytes:
+    def synthesize(self, text: str, voice: str, emotion: str, style: str = "") -> bytes:
         emotion_instructions = {
             "neutral": "차분하고 자연스러운 어조로 말하세요.",
             "happy": "밝고 따뜻하며 기쁜 감정이 느껴지는 어조로 말하세요.",
@@ -107,6 +107,9 @@ class GeminiSpeechClient:
         delivery_instruction = emotion_instructions.get(
             emotion, emotion_instructions["neutral"]
         )
+        # 페르소나 화자 설정이 있으면 감정 지시문 앞에 붙인다.
+        if style:
+            delivery_instruction = f"{style}, {delivery_instruction}"
         payload = post_json(
             self._endpoint,
             {

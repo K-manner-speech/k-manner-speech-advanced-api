@@ -93,7 +93,8 @@ class ConversationAdapter:
                     select a.id, a.processing_token, m.id as message_id, m.room_id,
                            m.content, m.sequence_no, r.practice_type, r.title,
                            r.persona_id, r.scenario_id, r.interview_configuration_id,
-                           p.name as persona_name, p.role_title, s.goal as scenario_goal,
+                           p.name as persona_name, p.role_title, p.description,
+                           ps.relationship_label, s.goal as scenario_goal,
                            coalesce(c.summary_text, '') as context_summary,
                            c.summarized_through_message_id,
                            recording.storage_path as recording_path,
@@ -107,6 +108,8 @@ class ConversationAdapter:
                     join public.practice_rooms r on r.id = m.room_id
                     left join public.personas p on p.id = r.persona_id
                     left join public.scenarios s on s.id = r.scenario_id
+                    left join public.persona_scenarios ps
+                      on ps.persona_id = r.persona_id and ps.scenario_id = r.scenario_id
                     left join public.room_contexts c on c.room_id = r.id
                     left join public.message_audio recording on recording.message_id = m.id
                       and recording.audio_type = 'user_recording' and recording.is_current
@@ -157,6 +160,9 @@ class ConversationAdapter:
                 "persona": {
                     "name": row["persona_name"],
                     "role": row["role_title"],
+                    # 말투(반말/존댓말)를 결정하는 근거라 반드시 함께 넘긴다.
+                    "description": row["description"],
+                    "relationship_to_user": row["relationship_label"],
                 },
                 "scenario_goal": row["scenario_goal"],
             },
@@ -780,10 +786,11 @@ class TTSAdapter:
                 text(
                     """
                     select a.id, a.processing_token, a.storage_path, m.content,
-                           m.persona_emotion
+                           m.persona_emotion, p.voice_key, p.voice_style
                     from public.message_audio a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
+                    left join public.personas p on p.id = r.persona_id
                     where a.id = :target_id and a.generation_status = 'processing'
                       and a.is_current and r.user_id = :user_id
                     for update of a
@@ -796,15 +803,21 @@ class TTSAdapter:
         )
         if row is None:
             return None
+        payload: dict[str, Any] = {
+            "text": row["content"],
+            "emotion": row["persona_emotion"] or "neutral",
+            "storage_path": row["storage_path"],
+        }
+        # 페르소나에 값이 없으면 키를 싣지 않아 worker 기본값이 그대로 쓰인다.
+        if row["voice_key"]:
+            payload["voice"] = row["voice_key"]
+        if row["voice_style"]:
+            payload["voice_style"] = row["voice_style"]
         return TargetClaim(
             target_id,
             row["processing_token"],
             "provider_processing",
-            {
-                "text": row["content"],
-                "emotion": row["persona_emotion"] or "neutral",
-                "storage_path": row["storage_path"],
-            },
+            payload,
         )
 
     def complete(self, session: Session, item: ClaimedJob, output: object) -> bool:
