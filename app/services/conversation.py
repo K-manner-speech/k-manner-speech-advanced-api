@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
+from app.adapters.storage import StorageObjectStore
 from app.core.errors import ApiError
 from app.repositories.conversation import (
     ConversationRepository,
@@ -66,8 +67,10 @@ class SqlConversationService:
         idempotency: IdempotencyRepository | None = None,
         idempotency_lease_seconds: int = 30,
         idempotency_retention_seconds: int = 86400,
+        storage: StorageObjectStore | None = None,
     ) -> None:
         self._repository = repository
+        self._storage = storage
         self._maximum_page_limit = maximum_page_limit
         self._user_queue_limit = user_queue_limit
         self._idempotency = idempotency
@@ -158,9 +161,19 @@ class SqlConversationService:
 
     def delete_room(self, user_id: UUID, room_id: UUID, idempotency_key: UUID) -> None:
         del idempotency_key
+        # 방이 사라지면 message_audio 레코드도 함께 지워져 경로를 찾을 수 없으므로
+        # 삭제 전에 목록을 확보한다.
+        storage_paths = (
+            self._repository.list_room_storage_paths(user_id, room_id)
+            if self._storage is not None
+            else []
+        )
         if not self._repository.delete_room(user_id, room_id):
             raise ApiError(404, "ROOM_NOT_FOUND", "대화방을 찾을 수 없습니다.")
         self._repository.commit()
+        if self._storage is not None:
+            for path in storage_paths:
+                self._storage.delete("message-audio", path)
 
     def _message(self, row: dict[str, object]) -> Message:
         status = row.pop("emotion_status", None)

@@ -192,6 +192,24 @@ class ConversationRepository:
         )
         return dict(row) if row is not None else None
 
+    def list_room_storage_paths(self, authenticated_user_id: UUID, room_id: UUID) -> list[str]:
+        """방에 속한 음성 파일 경로. 방을 지우기 전에 불러야 한다.
+
+        TTS와 사용자 녹음 모두 message-audio 버킷의 {user_id}/{room_id}/ 아래에
+        저장되므로, message_audio 레코드가 없는 파일까지 접두어로 찾는다.
+        """
+        rows = self._session.execute(
+            text(
+                """
+                select name
+                from storage.objects
+                where bucket_id = 'message-audio' and name like :room_prefix
+                """
+            ),
+            {"room_prefix": f"{authenticated_user_id}/{room_id}/%"},
+        ).scalars()
+        return [str(row) for row in rows]
+
     def delete_room(self, authenticated_user_id: UUID, room_id: UUID) -> bool:
         self._session.execute(
             text(
