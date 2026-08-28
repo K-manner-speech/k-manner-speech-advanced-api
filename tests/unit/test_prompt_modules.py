@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import inspect
 
-from app.ai.prompts.conversation import (
+from app.ai.prompts.policies.conversation import (
     CONVERSATION_SUMMARY_INSTRUCTIONS,
     build_conversation_instructions,
 )
-from app.ai.prompts.tasks import (
+from app.ai.prompts.policies.tasks import (
     DOCUMENT_ANALYSIS_INSTRUCTIONS,
     EMOTION_ANALYSIS_INSTRUCTIONS,
     INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS,

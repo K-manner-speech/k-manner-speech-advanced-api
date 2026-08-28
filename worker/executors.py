@@ -13,11 +13,12 @@ from app.ai.interfaces import (
     StructuredTextProvider,
     TokenCounter,
 )
-from app.ai.prompts.conversation import (
+from app.ai.prompts.composer import PromptComposer
+from app.ai.prompts.policies.conversation import (
     CONVERSATION_SUMMARY_INSTRUCTIONS,
     build_conversation_instructions,
 )
-from app.ai.prompts.tasks import (
+from app.ai.prompts.policies.tasks import (
     DOCUMENT_ANALYSIS_INSTRUCTIONS,
     EMOTION_ANALYSIS_INSTRUCTIONS,
     INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS,
@@ -130,6 +131,7 @@ class WorkerExecutors:
         evidence_retriever: EvidenceRetriever,
         rag_threshold: float,
         context_summary_trigger_tokens: int,
+        prompt_composer: PromptComposer | None = None,
     ) -> None:
         self._gemini_chat = gemini_chat
         self._token_counter = token_counter
@@ -141,6 +143,7 @@ class WorkerExecutors:
         self._evidence_retriever = evidence_retriever
         self._rag_threshold = rag_threshold
         self._context_summary_trigger_tokens = context_summary_trigger_tokens
+        self._prompt_composer = prompt_composer or PromptComposer.default()
 
     def execute(self, item: ClaimedJob, *, repair: bool = False) -> object:
         instructions_suffix = (
@@ -196,10 +199,20 @@ class WorkerExecutors:
                 input_text = json.dumps(compact_payload, ensure_ascii=False, default=str)
         is_interview = item.payload.get("room", {}).get("practice_type") == "interview"
         is_closing_response = bool(item.payload.get("interview_closing_response"))
+        room_payload = item.payload.get("room")
+        persona_bundle = None
+        if isinstance(room_payload, dict):
+            persona_payload = room_payload.get("persona")
+            if isinstance(persona_payload, dict):
+                raw_bundle = persona_payload.get("prompt_bundle")
+                if isinstance(raw_bundle, str) and raw_bundle:
+                    persona_bundle = raw_bundle
+        catalog_prompt = self._prompt_composer.compose_conversation(persona_bundle)
         generation_kwargs: dict[str, object] = {
             "instructions": build_conversation_instructions(
                 is_interview=is_interview,
                 is_closing_response=is_closing_response,
+                catalog_prompt=catalog_prompt,
                 suffix=suffix,
             ),
             "input_text": input_text,

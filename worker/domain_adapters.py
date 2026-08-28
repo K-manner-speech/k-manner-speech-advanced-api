@@ -94,7 +94,9 @@ class ConversationAdapter:
                            m.content, m.sequence_no, r.practice_type, r.title,
                            r.persona_id, r.scenario_id, r.interview_configuration_id,
                            p.name as persona_name, p.role_title, p.description,
-                           ps.relationship_label, s.goal as scenario_goal,
+                           p.prompt_bundle_key as persona_prompt_bundle,
+                           ps.relationship_label,
+                           s.goal as scenario_goal,
                            coalesce(c.summary_text, '') as context_summary,
                            c.summarized_through_message_id,
                            recording.storage_path as recording_path,
@@ -163,6 +165,7 @@ class ConversationAdapter:
                     # 말투(반말/존댓말)를 결정하는 근거라 반드시 함께 넘긴다.
                     "description": row["description"],
                     "relationship_to_user": row["relationship_label"],
+                    "prompt_bundle": row["persona_prompt_bundle"],
                 },
                 "scenario_goal": row["scenario_goal"],
             },

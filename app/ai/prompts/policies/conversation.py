@@ -1,4 +1,4 @@
-"""Conversation and interview response prompts."""
+"""Conversation and interview response policies."""
 
 CONVERSATION_SUMMARY_INSTRUCTIONS = (
     "기존 요약과 오래된 메시지만 사용해 relation, situation, goals, agreements, "
@@ -50,13 +50,19 @@ def build_conversation_instructions(
     *,
     is_interview: bool,
     is_closing_response: bool,
+    catalog_prompt: str = "",
     suffix: str = "",
 ) -> str:
-    """Select the conversation policy and append retry-specific instructions."""
+    """Combine curated persona text with authoritative backend policy."""
     if is_closing_response:
         mode_instructions = INTERVIEW_CLOSING_INSTRUCTIONS
     elif is_interview:
         mode_instructions = INTERVIEW_RESPONSE_INSTRUCTIONS
     else:
         mode_instructions = GENERAL_CONVERSATION_INSTRUCTIONS
-    return CONVERSATION_BASE_INSTRUCTIONS + mode_instructions + suffix
+    catalog_section = (
+        f"\n\n# Persona and conversation catalog\n{catalog_prompt.strip()}"
+        if catalog_prompt.strip()
+        else ""
+    )
+    return CONVERSATION_BASE_INSTRUCTIONS + catalog_section + mode_instructions + suffix

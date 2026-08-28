@@ -1,0 +1,11 @@
+id: base_chat
+version: 1
+description: 일반 채팅에 사용하는 기본 프롬프트 묶음
+
+prompts:
+  - category: rules
+    name: safety
+  - category: rules
+    name: no_hallucination
+  - category: styles
+    name: concise

@@ -1,4 +1,4 @@
-"""Prompts for non-conversation AI worker tasks."""
+"""Backend-owned prompts for non-conversation AI worker tasks."""
 
 EMOTION_ANALYSIS_INSTRUCTIONS = (
     "사용자 발화에서 드러난 감정을 여섯 고정 label 중 하나로 분류하고 짧은 근거를 "
