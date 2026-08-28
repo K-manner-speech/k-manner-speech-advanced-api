@@ -150,11 +150,12 @@ class ConversationRepository:
             self._session.execute(
                 text(
                     """
-                select id, title, practice_type, persona_id, scenario_id, status,
-                       turn_count, ended_reason, started_at, completed_at, updated_at,
-                       goal_snapshot as goal
-                from public.practice_rooms
-                where id = :room_id and user_id = :authenticated_user_id
+                select r.id, r.title, r.practice_type, r.persona_id, r.scenario_id, r.status,
+                       r.turn_count, r.ended_reason, r.started_at, r.completed_at, r.updated_at,
+                       r.goal_snapshot as goal, p.name as persona_name
+                from public.practice_rooms r
+                left join public.personas p on p.id = r.persona_id
+                where r.id = :room_id and r.user_id = :authenticated_user_id
                 """
                 ),
                 {"room_id": room_id, "authenticated_user_id": authenticated_user_id},

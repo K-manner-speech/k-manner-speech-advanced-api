@@ -69,7 +69,11 @@ class StubConversationService(ConversationService):
         return Page(items=[RoomSummary.model_validate(room().model_dump())], next_cursor=None)
 
     def get_room(self, user_id: Any, room_id: Any) -> RoomDetail:
-        return RoomDetail(**room().model_dump(), goal="정중하게 요청하기")
+        return RoomDetail(
+            **room().model_dump(),
+            goal="정중하게 요청하기",
+            persona_name="민준 팀장",
+        )
 
     def delete_room(self, user_id: Any, room_id: Any, idempotency_key: Any) -> None:
         return None
@@ -130,7 +134,9 @@ def test_room_routes_are_exposed() -> None:
     )
     assert created.status_code == 201
     assert api.get("/api/v1/rooms?limit=10", headers=AUTH).status_code == 200
-    assert api.get(f"/api/v1/rooms/{ROOM_ID}", headers=AUTH).status_code == 200
+    room_detail = api.get(f"/api/v1/rooms/{ROOM_ID}", headers=AUTH)
+    assert room_detail.status_code == 200
+    assert room_detail.json()["persona_name"] == "민준 팀장"
     assert (
         api.delete(
             f"/api/v1/rooms/{ROOM_ID}",

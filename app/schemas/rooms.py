@@ -60,6 +60,7 @@ class RoomSummary(Room):
 
 class RoomDetail(Room):
     goal: str | None
+    persona_name: str | None
 
 
 class Message(ContractModel):
