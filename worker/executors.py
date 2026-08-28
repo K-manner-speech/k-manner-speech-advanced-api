@@ -243,6 +243,7 @@ class WorkerExecutors:
                 str(item.payload["text"]),
                 str(item.payload.get("voice", "Kore")),
                 str(item.payload.get("emotion", "neutral")),
+                str(item.payload.get("voice_style", "")),
             ),
             storage_path=str(item.payload["storage_path"]),
         )

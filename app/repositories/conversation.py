@@ -57,7 +57,8 @@ class ConversationRepository:
             self._session.execute(
                 text(
                     """
-                select p.name as persona_name, s.title as scenario_title, s.goal
+                select p.name as persona_name, s.title as scenario_title, s.goal,
+                       s.opening_message
                 from public.personas p
                 left join public.scenarios s
                   on s.id = :scenario_id and s.is_active = true
@@ -108,6 +109,19 @@ class ConversationRepository:
             .mappings()
             .one()
         )
+        opening_message = catalog.get("opening_message")
+        if opening_message:
+            self._session.execute(
+                text(
+                    """
+                insert into public.room_messages
+                    (room_id, sequence_no, sender_type, content, delivery_status,
+                     persona_emotion)
+                values (:room_id, 1, 'persona', :content, 'sent', 'neutral')
+                """
+                ),
+                {"room_id": row["id"], "content": opening_message},
+            )
         return dict(row)
 
     def list_rooms(
