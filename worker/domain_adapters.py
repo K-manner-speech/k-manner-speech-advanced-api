@@ -96,7 +96,12 @@ class ConversationAdapter:
                            p.name as persona_name, p.role_title, s.goal as scenario_goal,
                            coalesce(c.summary_text, '') as context_summary,
                            c.summarized_through_message_id,
-                           recording.storage_path as recording_path
+                           recording.storage_path as recording_path,
+                           answer.id as interview_answer_id,
+                           answer.answer_attempt_no as interview_answer_attempt_no,
+                           question.id as interview_question_id,
+                           question.question_text as interview_question_text,
+                           question.sequence_no as interview_question_sequence
                     from public.message_ai_processing a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -105,6 +110,9 @@ class ConversationAdapter:
                     left join public.room_contexts c on c.room_id = r.id
                     left join public.message_audio recording on recording.message_id = m.id
                       and recording.audio_type = 'user_recording' and recording.is_current
+                    left join public.interview_answers answer on answer.message_id = m.id
+                    left join public.interview_questions question
+                      on question.id = answer.question_id
                     where a.id = :target_id and a.processing_status = 'processing'
                       and r.user_id = :user_id and r.status = 'in_progress'
                     for update of a, r
@@ -156,6 +164,36 @@ class ConversationAdapter:
             "messages": [dict(message) for message in messages],
             "current_user_message_id": str(row["message_id"]),
         }
+        if row["practice_type"] == "interview" and row["interview_question_id"] is not None:
+            payload["current_interview_question"] = {
+                "id": str(row["interview_question_id"]),
+                "text": row["interview_question_text"],
+            }
+            payload["current_interview_answer_attempt_no"] = int(
+                row["interview_answer_attempt_no"]
+            )
+            next_question = session.execute(
+                text(
+                    """
+                    select id, question_text
+                    from public.interview_questions
+                    where configuration_id = :configuration_id
+                      and sequence_no > :current_sequence
+                    order by sequence_no, id
+                    limit 1
+                    """
+                ),
+                {
+                    "configuration_id": row["interview_configuration_id"],
+                    "current_sequence": row["interview_question_sequence"],
+                },
+            ).mappings().one_or_none()
+            payload["next_interview_question"] = (
+                {"id": str(next_question["id"]), "text": next_question["question_text"]}
+                if next_question is not None else None
+            )
+        elif row["practice_type"] == "interview":
+            payload["interview_closing_response"] = True
         if row.get("recording_path") and self._storage is not None:
             path = str(row["recording_path"])
             payload["audio_bytes"] = self._storage.download("message-audio", path)
@@ -202,6 +240,23 @@ class ConversationAdapter:
         )
         if target is None:
             return False
+        if target["practice_type"] == "interview":
+            session.execute(
+                text(
+                    """
+                    update public.interview_answers
+                    set is_current = :is_complete
+                    where message_id = :message_id and room_id = :room_id
+                    """
+                ),
+                {
+                    "is_complete": bool(
+                        reply.interview_answer_complete or reply.interview_should_end
+                    ),
+                    "message_id": target["user_message_id"],
+                    "room_id": target["room_id"],
+                },
+            )
         sequence_no = session.execute(
             text(
                 "select coalesce(max(sequence_no), 0) + 1 "
@@ -269,13 +324,12 @@ class ConversationAdapter:
             ),
             {"room_id": target["room_id"], "user_id": item.user_id},
         ).scalar_one()
-        should_complete = self._should_complete(
-            session,
-            target["room_id"],
-            str(target["practice_type"]),
-            int(new_turn_count),
-            target["interview_configuration_id"],
-        )
+        should_complete = bool(reply.interview_should_end)
+        if target["practice_type"] != "interview":
+            should_complete = self._should_complete(
+                session, target["room_id"], str(target["practice_type"]),
+                int(new_turn_count), target["interview_configuration_id"],
+            )
         if should_complete:
             self._complete_room(
                 session,

@@ -152,7 +152,20 @@ class ConversationRepository:
                     """
                 select r.id, r.title, r.practice_type, r.persona_id, r.scenario_id, r.status,
                        r.turn_count, r.ended_reason, r.started_at, r.completed_at, r.updated_at,
-                       r.goal_snapshot as goal, p.name as persona_name
+                       r.goal_snapshot as goal, p.name as persona_name,
+                       r.interview_configuration_id,
+                       case when r.practice_type = 'interview' then (
+                         select q.id
+                         from public.interview_questions q
+                         where q.configuration_id = r.interview_configuration_id
+                           and not exists (
+                             select 1 from public.interview_answers a
+                             where a.question_id = q.id and a.room_id = r.id
+                               and a.is_current
+                           )
+                         order by q.sequence_no, q.id
+                         limit 1
+                       ) end as current_interview_question_id
                 from public.practice_rooms r
                 left join public.personas p on p.id = r.persona_id
                 where r.id = :room_id and r.user_id = :authenticated_user_id
@@ -265,8 +278,6 @@ class ConversationRepository:
 
         question_id = request.current_interview_question_id
         if room["practice_type"] == "interview":
-            if question_id is None:
-                raise InterviewQuestionModeError("interview question is required")
             next_question_id = self._session.execute(
                 text(
                     """
@@ -276,6 +287,7 @@ class ConversationRepository:
                       and not exists (
                         select 1 from public.interview_answers a
                         where a.question_id = q.id and a.room_id = :room_id
+                          and a.is_current
                       )
                     order by q.sequence_no, q.id
                     limit 1
@@ -287,7 +299,9 @@ class ConversationRepository:
                     "room_id": room_id,
                 },
             ).scalar_one_or_none()
-            if next_question_id is None or next_question_id != question_id:
+            if question_id is None and next_question_id is not None:
+                raise InterviewQuestionModeError("interview question is required")
+            if question_id is not None and next_question_id != question_id:
                 raise InterviewQuestionOrderError("interview question is out of order")
         elif question_id is not None:
             raise InterviewQuestionModeError("question is not allowed for this room")
@@ -337,7 +351,13 @@ class ConversationRepository:
                     """
                     insert into public.interview_answers
                         (question_id, room_id, message_id, answer_attempt_no, is_current)
-                    values (:question_id, :room_id, :message_id, 1, true)
+                    values (
+                        :question_id, :room_id, :message_id,
+                        coalesce((select max(answer_attempt_no) + 1
+                                  from public.interview_answers
+                                  where question_id = :question_id), 1),
+                        false
+                    )
                     """
                 ),
                 {

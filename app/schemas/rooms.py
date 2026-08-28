@@ -61,6 +61,8 @@ class RoomSummary(Room):
 class RoomDetail(Room):
     goal: str | None
     persona_name: str | None
+    interview_configuration_id: UUID | None = None
+    current_interview_question_id: UUID | None = None
 
 
 class Message(ContractModel):

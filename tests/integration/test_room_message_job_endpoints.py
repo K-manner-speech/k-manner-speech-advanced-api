@@ -19,6 +19,7 @@ USER_ID = uuid4()
 ROOM_ID = uuid4()
 MESSAGE_ID = uuid4()
 JOB_ID = uuid4()
+CONFIGURATION_ID = uuid4()
 NOW = datetime.now(UTC)
 
 
@@ -73,6 +74,8 @@ class StubConversationService(ConversationService):
             **room().model_dump(),
             goal="정중하게 요청하기",
             persona_name="민준 팀장",
+            interview_configuration_id=CONFIGURATION_ID,
+            current_interview_question_id=MESSAGE_ID,
         )
 
     def delete_room(self, user_id: Any, room_id: Any, idempotency_key: Any) -> None:
@@ -137,6 +140,8 @@ def test_room_routes_are_exposed() -> None:
     room_detail = api.get(f"/api/v1/rooms/{ROOM_ID}", headers=AUTH)
     assert room_detail.status_code == 200
     assert room_detail.json()["persona_name"] == "민준 팀장"
+    assert room_detail.json()["interview_configuration_id"] == str(CONFIGURATION_ID)
+    assert room_detail.json()["current_interview_question_id"] == str(MESSAGE_ID)
     assert (
         api.delete(
             f"/api/v1/rooms/{ROOM_ID}",

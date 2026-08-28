@@ -30,6 +30,8 @@ class ConversationReply(ContractModel):
     reply: str = Field(min_length=1, max_length=4000)
     persona_emotion: EmotionLabel
     summary: ConversationSummary | None
+    interview_answer_complete: bool | None = None
+    interview_should_end: bool | None = None
 
 
 class EmotionAnalysis(ContractModel):

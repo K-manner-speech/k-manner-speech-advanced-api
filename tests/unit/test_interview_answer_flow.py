@@ -68,3 +68,15 @@ def test_repository_contains_atomic_interview_answer_contract() -> None:
     assert "order by q.sequence_no, q.id" in source, "AC-T5-INTERVIEW-ORDER"
     assert "insert into public.interview_answers" in source, "AC-T5-INTERVIEW-ORDER"
     assert "current_interview_question_id" in source, "AC-T5-INTERVIEW-ORDER"
+    assert "a.is_current" in source, "incomplete answers must keep the current question"
+
+
+def test_worker_marks_answer_current_only_after_ai_completion() -> None:
+    source = __import__("inspect").getsource(
+        __import__("worker.domain_adapters", fromlist=["ConversationAdapter"])
+        .ConversationAdapter.complete
+    )
+
+    assert "interview_answer_complete" in source
+    assert "update public.interview_answers" in source
+    assert "interview_should_end" in source

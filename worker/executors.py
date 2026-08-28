@@ -13,6 +13,17 @@ from app.ai.interfaces import (
     StructuredTextProvider,
     TokenCounter,
 )
+from app.ai.prompts.conversation import (
+    CONVERSATION_SUMMARY_INSTRUCTIONS,
+    build_conversation_instructions,
+)
+from app.ai.prompts.tasks import (
+    DOCUMENT_ANALYSIS_INSTRUCTIONS,
+    EMOTION_ANALYSIS_INSTRUCTIONS,
+    INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS,
+    SESSION_RESULT_INSTRUCTIONS,
+    TURN_FEEDBACK_INSTRUCTIONS,
+)
 from app.ai.rag import EvidenceChunk, chunk_document
 from app.ai.schemas import (
     ConversationReply,
@@ -162,11 +173,7 @@ class WorkerExecutors:
             older, recent = split_conversation_messages(messages)
             if older:
                 summary = self._gemini_chat.generate_structured(
-                    instructions=(
-                        "기존 요약과 오래된 메시지만 사용해 relation, situation, goals, "
-                        "agreements, unresolved, important_facts를 갱신하세요. 명시되지 않은 "
-                        "사실을 추론하지 마세요." + suffix
-                    ),
+                    instructions=CONVERSATION_SUMMARY_INSTRUCTIONS + suffix,
                     input_text=json.dumps(
                         {
                             "existing_summary": item.payload.get("context_summary"),
@@ -187,12 +194,13 @@ class WorkerExecutors:
                     "messages": recent,
                 }
                 input_text = json.dumps(compact_payload, ensure_ascii=False, default=str)
+        is_interview = item.payload.get("room", {}).get("practice_type") == "interview"
+        is_closing_response = bool(item.payload.get("interview_closing_response"))
         generation_kwargs: dict[str, object] = {
-            "instructions": (
-                "한국어 대화 연습 상대 역할을 유지하고, 제공된 사실만 사용해 자연스럽게 한 번 "
-                "응답하세요. 사용자 말을 들은 페르소나의 입장에서 느끼는 감정을 판단해 "
-                "persona_emotion에 여섯 고정 label 중 하나로 반환하세요. 음성이 첨부되면 문장뿐 "
-                "아니라 톤·속도·강세도 참고하세요. summary 필드는 null로 반환하세요." + suffix
+            "instructions": build_conversation_instructions(
+                is_interview=is_interview,
+                is_closing_response=is_closing_response,
+                suffix=suffix,
             ),
             "input_text": input_text,
             "schema_name": "conversation_reply",
@@ -204,6 +212,16 @@ class WorkerExecutors:
         reply: ConversationReply = self._gemini_chat.generate_structured(
             **generation_kwargs,  # type: ignore[arg-type]
         )
+        if is_closing_response:
+            reply = reply.model_copy(update={
+                "interview_answer_complete": True,
+                "interview_should_end": True,
+            })
+        elif is_interview and (
+            int(item.payload.get("current_interview_answer_attempt_no", 1)) >= 2
+            or bool(reply.interview_should_end)
+        ):
+            reply = reply.model_copy(update={"interview_answer_complete": True})
         return ConversationOutput(
             reply=reply,
             summary=summary,
@@ -213,10 +231,7 @@ class WorkerExecutors:
 
     def _emotion(self, item: ClaimedJob, suffix: str) -> EmotionAnalysis:
         return self._gemini_emotion.generate_structured(
-            instructions=(
-                "사용자 발화에서 드러난 감정을 여섯 고정 label 중 하나로 분류하고 짧은 근거를 "
-                "제시하세요. 추측을 사실처럼 표현하지 마세요." + suffix
-            ),
+            instructions=EMOTION_ANALYSIS_INSTRUCTIONS + suffix,
             input_text=str(item.payload["text"]),
             schema_name="emotion_analysis",
             result_type=EmotionAnalysis,
@@ -234,11 +249,7 @@ class WorkerExecutors:
 
     def _feedback(self, item: ClaimedJob, suffix: str) -> GeneralFeedback:
         return self._openai_feedback.generate_structured(
-            instructions=(
-                "한국어 발화를 높임법, 예의와 배려, 상황 적합성, 자연스러움 네 항목으로 "
-                "각각 정수 0~25점 평가하세요. 답변에 실제로 드러난 내용만 근거로 삼으세요."
-                + suffix
-            ),
+            instructions=TURN_FEEDBACK_INSTRUCTIONS + suffix,
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="turn_feedback",
             result_type=GeneralFeedback,
@@ -246,10 +257,7 @@ class WorkerExecutors:
 
     def _document_analysis(self, item: ClaimedJob, suffix: str) -> DocumentAnalysisOutput:
         analysis = self._openai_interview.generate_structured(
-            instructions=(
-                "지원 문서를 면접 준비용으로 구조화하세요. 문서의 사실만 사용하고 인용 근거를 "
-                "보존하세요." + suffix
-            ),
+            instructions=DOCUMENT_ANALYSIS_INSTRUCTIONS + suffix,
             input_text=str(item.payload["extracted_text"]),
             schema_name="interview_document_analysis",
             result_type=InterviewAnalysisResult,
@@ -294,8 +302,10 @@ class WorkerExecutors:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
         questions = self._openai_interview.generate_structured(
             instructions=(
-                f"제공된 근거만 사용해 면접 질문을 정확히 {item.payload['question_count']}개 "
-                "생성하고 각 source ref를 보존하세요." + suffix
+                INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS.format(
+                    question_count=item.payload["question_count"],
+                )
+                + suffix
             ),
             input_text=json.dumps(
                 {
@@ -328,11 +338,7 @@ class WorkerExecutors:
 
     def _session_result(self, item: ClaimedJob, suffix: str) -> FinalSessionOutput:
         generated = self._openai_interview.generate_structured(
-            instructions=(
-                "대화 결과를 강점과 개선점으로 정리하세요. 면접이면 고정 5개 항목을 각각 "
-                "정수 1~20점으로 평가하고 합격·불합격을 판정하지 마세요. 실제 답변만 근거로 "
-                "평가하세요." + suffix
-            ),
+            instructions=SESSION_RESULT_INSTRUCTIONS + suffix,
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="session_result",
             result_type=SessionResultOutput,
