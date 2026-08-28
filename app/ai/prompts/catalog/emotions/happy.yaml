@@ -1,0 +1,7 @@
+id: happy
+version: 1
+description: 기쁜 발화
+priority: 50
+
+prompt: |
+  밝고 따뜻하며 기쁜 감정이 느껴지는 어조로 말하세요.

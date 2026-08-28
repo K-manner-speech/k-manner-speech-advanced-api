@@ -1,0 +1,7 @@
+id: embarrassment
+version: 1
+description: 난처한 발화
+priority: 50
+
+prompt: |
+  조심스럽고 난처한 감정이 느껴지는 어조로 말하세요.

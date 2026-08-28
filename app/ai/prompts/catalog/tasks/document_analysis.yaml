@@ -1,0 +1,6 @@
+id: document_analysis
+version: 1
+description: 지원 문서를 면접 준비용으로 구조화
+
+prompt: |
+  지원 문서를 면접 준비용으로 구조화하세요. 문서의 사실만 사용하고 인용 근거를 보존하세요.

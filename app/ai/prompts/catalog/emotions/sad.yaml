@@ -1,0 +1,7 @@
+id: sad
+version: 1
+description: 아쉬운 발화
+priority: 50
+
+prompt: |
+  낮고 부드러우며 아쉬움이 느껴지는 어조로 말하세요.

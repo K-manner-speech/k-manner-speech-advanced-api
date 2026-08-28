@@ -1,0 +1,6 @@
+id: interview_question_generation
+version: 1
+description: 근거 기반 면접 질문 생성. {question_count} 는 호출 시 채워진다
+
+prompt: |
+  제공된 근거만 사용해 면접 질문을 정확히 {question_count}개 생성하고 각 source ref를 보존하세요.

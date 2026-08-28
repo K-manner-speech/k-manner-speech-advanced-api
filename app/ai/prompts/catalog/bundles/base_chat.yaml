@@ -7,5 +7,7 @@ prompts:
     name: safety
   - category: rules
     name: no_hallucination
+  - category: rules
+    name: speech_level
   - category: styles
     name: concise

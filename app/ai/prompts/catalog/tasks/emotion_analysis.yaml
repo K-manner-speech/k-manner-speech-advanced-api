@@ -1,0 +1,6 @@
+id: emotion_analysis
+version: 1
+description: 사용자 발화의 감정 분류
+
+prompt: |
+  사용자 발화에서 드러난 감정을 여섯 고정 label 중 하나로 분류하고 짧은 근거를 제시하세요. 추측을 사실처럼 표현하지 마세요.

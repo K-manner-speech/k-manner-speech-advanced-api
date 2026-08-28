@@ -1,0 +1,7 @@
+id: neutral
+version: 1
+description: 차분한 발화
+priority: 50
+
+prompt: |
+  차분하고 자연스러운 어조로 말하세요.

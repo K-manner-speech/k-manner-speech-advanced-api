@@ -17,8 +17,8 @@ class RecordingSpeechProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
-    def synthesize(self, text: str, voice: str, emotion: str, style: str = "") -> bytes:
-        self.calls.append((text, voice, emotion))
+    def synthesize(self, text: str, voice: str, delivery_instruction: str) -> bytes:
+        self.calls.append((text, voice, delivery_instruction))
         return b"wav"
 
 
@@ -59,10 +59,14 @@ def test_tts_executor_passes_persona_reaction_to_speech_provider() -> None:
 
     executors.execute(tts_item("embarrassment"))
 
-    assert speech.calls == [("괜찮습니다.", "Kore", "embarrassment")]
+    assert len(speech.calls) == 1
+    text, voice, instruction = speech.calls[0]
+    assert (text, voice) == ("괜찮습니다.", "Kore")
+    # 감정별 어조는 catalog/emotions 조각에서 온다.
+    assert "난처한" in instruction
 
 
-def _tts_claim(voice_key: str | None, voice_style: str | None) -> object:
+def _tts_claim(prompt_bundle_key: str | None) -> object:
     session = MagicMock()
     session.execute.return_value.mappings.return_value.one_or_none.return_value = {
         "id": uuid4(),
@@ -70,8 +74,7 @@ def _tts_claim(voice_key: str | None, voice_style: str | None) -> object:
         "storage_path": "owner/room/message.wav",
         "content": "알겠습니다.",
         "persona_emotion": "curious",
-        "voice_key": voice_key,
-        "voice_style": voice_style,
+        "prompt_bundle_key": prompt_bundle_key,
     }
     claim = TTSAdapter(MagicMock()).claim(
         session,
@@ -81,28 +84,26 @@ def _tts_claim(voice_key: str | None, voice_style: str | None) -> object:
 
 
 def test_tts_claim_reads_persisted_persona_reaction() -> None:
-    claim, session = _tts_claim(None, None)
+    claim, session = _tts_claim(None)
 
     assert claim is not None
     assert claim.payload["emotion"] == "curious"
     assert "m.persona_emotion" in str(session.execute.call_args.args[0])
 
 
-def test_tts_claim_omits_voice_keys_when_persona_has_no_voice_settings() -> None:
-    claim, _ = _tts_claim(None, None)
+def test_tts_claim_omits_the_bundle_when_the_persona_has_none() -> None:
+    claim, _ = _tts_claim(None)
 
     assert claim is not None
-    assert "voice" not in claim.payload
-    assert "voice_style" not in claim.payload
+    assert "prompt_bundle" not in claim.payload
 
 
-def test_tts_claim_carries_persona_voice_settings() -> None:
-    claim, session = _tts_claim("Achird", "20대 초반 남자 대학생이 편하게 말하듯")
+def test_tts_claim_carries_the_personas_prompt_bundle() -> None:
+    claim, session = _tts_claim("seojun")
 
     assert claim is not None
-    assert claim.payload["voice"] == "Achird"
-    assert claim.payload["voice_style"] == "20대 초반 남자 대학생이 편하게 말하듯"
-    assert "p.voice_key" in str(session.execute.call_args.args[0])
+    assert claim.payload["prompt_bundle"] == "seojun"
+    assert "p.prompt_bundle_key" in str(session.execute.call_args.args[0])
 
 
 def test_message_list_query_exposes_persona_reaction_as_emotion_snapshot() -> None:
@@ -117,7 +118,7 @@ def test_message_list_query_exposes_persona_reaction_as_emotion_snapshot() -> No
     assert "as emotion_label" in message_query
 
 
-def test_gemini_speech_uses_fixed_emotion_instruction(monkeypatch: MagicMock) -> None:
+def test_gemini_speech_forwards_the_delivery_instruction(monkeypatch: MagicMock) -> None:
     captured: dict[str, object] = {}
 
     def fake_post_json(
@@ -131,7 +132,9 @@ def test_gemini_speech_uses_fixed_emotion_instruction(monkeypatch: MagicMock) ->
 
     monkeypatch.setattr("app.ai.providers.gemini.post_json", fake_post_json)
 
-    GeminiSpeechClient("secret", "tts-model").synthesize("괜찮습니다.", "Kore", "sad")
+    GeminiSpeechClient("secret", "tts-model").synthesize(
+        "괜찮습니다.", "Kore", "낮고 부드러우며 아쉬움이 느껴지는 어조로 말하세요."
+    )
 
     assert "아쉬움" in str(captured["input"])
     assert "괜찮습니다." in str(captured["input"])

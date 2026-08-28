@@ -44,7 +44,7 @@ class EmbeddingProvider(Protocol):
 
 
 class SpeechProvider(Protocol):
-    def synthesize(self, text: str, voice: str, emotion: str, style: str = "") -> bytes: ...
+    def synthesize(self, text: str, voice: str, delivery_instruction: str) -> bytes: ...
 
 
 class ConversationProvider(Protocol):
