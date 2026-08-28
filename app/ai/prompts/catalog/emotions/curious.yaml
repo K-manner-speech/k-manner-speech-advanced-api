@@ -1,0 +1,7 @@
+id: curious
+version: 1
+description: 궁금한 발화
+priority: 50
+
+prompt: |
+  관심과 궁금함이 자연스럽게 드러나는 어조로 말하세요.

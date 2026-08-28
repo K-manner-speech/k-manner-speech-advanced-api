@@ -95,21 +95,7 @@ class GeminiSpeechClient:
         self._model = model
         self._timeout_seconds = timeout_seconds
 
-    def synthesize(self, text: str, voice: str, emotion: str, style: str = "") -> bytes:
-        emotion_instructions = {
-            "neutral": "차분하고 자연스러운 어조로 말하세요.",
-            "happy": "밝고 따뜻하며 기쁜 감정이 느껴지는 어조로 말하세요.",
-            "sad": "낮고 부드러우며 아쉬움이 느껴지는 어조로 말하세요.",
-            "angry": "불편함이 드러나되 과장하지 않고 단호한 어조로 말하세요.",
-            "curious": "관심과 궁금함이 자연스럽게 드러나는 어조로 말하세요.",
-            "embarrassment": "조심스럽고 난처한 감정이 느껴지는 어조로 말하세요.",
-        }
-        delivery_instruction = emotion_instructions.get(
-            emotion, emotion_instructions["neutral"]
-        )
-        # 페르소나 화자 설정이 있으면 감정 지시문 앞에 붙인다.
-        if style:
-            delivery_instruction = f"{style}, {delivery_instruction}"
+    def synthesize(self, text: str, voice: str, delivery_instruction: str) -> bytes:
         payload = post_json(
             self._endpoint,
             {

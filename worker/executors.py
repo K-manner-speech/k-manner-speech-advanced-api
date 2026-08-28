@@ -18,13 +18,6 @@ from app.ai.prompts.policies.conversation import (
     CONVERSATION_SUMMARY_INSTRUCTIONS,
     build_conversation_instructions,
 )
-from app.ai.prompts.policies.tasks import (
-    DOCUMENT_ANALYSIS_INSTRUCTIONS,
-    EMOTION_ANALYSIS_INSTRUCTIONS,
-    INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS,
-    SESSION_RESULT_INSTRUCTIONS,
-    TURN_FEEDBACK_INSTRUCTIONS,
-)
 from app.ai.rag import EvidenceChunk, chunk_document
 from app.ai.schemas import (
     ConversationReply,
@@ -207,7 +200,10 @@ class WorkerExecutors:
                 raw_bundle = persona_payload.get("prompt_bundle")
                 if isinstance(raw_bundle, str) and raw_bundle:
                     persona_bundle = raw_bundle
-        catalog_prompt = self._prompt_composer.compose_conversation(persona_bundle)
+        role = room_payload.get("role") if isinstance(room_payload, dict) else None
+        catalog_prompt = self._prompt_composer.compose_conversation(
+            persona_bundle, role if isinstance(role, str) else None
+        )
         generation_kwargs: dict[str, object] = {
             "instructions": build_conversation_instructions(
                 is_interview=is_interview,
@@ -244,26 +240,30 @@ class WorkerExecutors:
 
     def _emotion(self, item: ClaimedJob, suffix: str) -> EmotionAnalysis:
         return self._gemini_emotion.generate_structured(
-            instructions=EMOTION_ANALYSIS_INSTRUCTIONS + suffix,
+            instructions=self._prompt_composer.task_instruction("emotion_analysis") + suffix,
             input_text=str(item.payload["text"]),
             schema_name="emotion_analysis",
             result_type=EmotionAnalysis,
         )
 
     def _tts(self, item: ClaimedJob, _suffix: str) -> TTSOutput:
+        raw_bundle = item.payload.get("prompt_bundle")
+        bundle = raw_bundle if isinstance(raw_bundle, str) else None
+        voice = self._prompt_composer.voice_for(bundle)
         return TTSOutput(
             wav=self._gemini_tts.synthesize(
                 str(item.payload["text"]),
-                str(item.payload.get("voice", "Kore")),
-                str(item.payload.get("emotion", "neutral")),
-                str(item.payload.get("voice_style", "")),
+                voice.key if voice else "Kore",
+                self._prompt_composer.tts_instruction(
+                    bundle, str(item.payload.get("emotion", "neutral"))
+                ),
             ),
             storage_path=str(item.payload["storage_path"]),
         )
 
     def _feedback(self, item: ClaimedJob, suffix: str) -> GeneralFeedback:
         return self._openai_feedback.generate_structured(
-            instructions=TURN_FEEDBACK_INSTRUCTIONS + suffix,
+            instructions=self._prompt_composer.task_instruction("turn_feedback") + suffix,
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="turn_feedback",
             result_type=GeneralFeedback,
@@ -271,7 +271,7 @@ class WorkerExecutors:
 
     def _document_analysis(self, item: ClaimedJob, suffix: str) -> DocumentAnalysisOutput:
         analysis = self._openai_interview.generate_structured(
-            instructions=DOCUMENT_ANALYSIS_INSTRUCTIONS + suffix,
+            instructions=self._prompt_composer.task_instruction("document_analysis") + suffix,
             input_text=str(item.payload["extracted_text"]),
             schema_name="interview_document_analysis",
             result_type=InterviewAnalysisResult,
@@ -316,9 +316,9 @@ class WorkerExecutors:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
         questions = self._openai_interview.generate_structured(
             instructions=(
-                INTERVIEW_QUESTION_GENERATION_INSTRUCTIONS.format(
-                    question_count=item.payload["question_count"],
-                )
+                self._prompt_composer.task_instruction(
+                    "interview_question_generation"
+                ).format(question_count=item.payload["question_count"])
                 + suffix
             ),
             input_text=json.dumps(
@@ -352,7 +352,7 @@ class WorkerExecutors:
 
     def _session_result(self, item: ClaimedJob, suffix: str) -> FinalSessionOutput:
         generated = self._openai_interview.generate_structured(
-            instructions=SESSION_RESULT_INSTRUCTIONS + suffix,
+            instructions=self._prompt_composer.task_instruction("session_result") + suffix,
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="session_result",
             result_type=SessionResultOutput,

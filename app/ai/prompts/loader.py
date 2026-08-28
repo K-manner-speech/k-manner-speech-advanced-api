@@ -11,7 +11,17 @@ from app.ai.prompts.models import PromptBundle, PromptFragment
 
 _SAFE_PATH = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+)*$")
 _CATEGORIES = frozenset(
-    {"identities", "modes", "personalities", "profiles", "rules", "styles", "tasks"}
+    {
+        "emotions",
+        "identities",
+        "modes",
+        "personalities",
+        "profiles",
+        "roles",
+        "rules",
+        "styles",
+        "tasks",
+    }
 )
 
 

@@ -93,9 +93,9 @@ class ConversationAdapter:
                     select a.id, a.processing_token, m.id as message_id, m.room_id,
                            m.content, m.sequence_no, r.practice_type, r.title,
                            r.persona_id, r.scenario_id, r.interview_configuration_id,
-                           p.name as persona_name, p.role_title, p.description,
+                           p.name as persona_name, p.role_title,
                            p.prompt_bundle_key as persona_prompt_bundle,
-                           ps.relationship_label,
+                           ps.role_key,
                            s.goal as scenario_goal,
                            coalesce(c.summary_text, '') as context_summary,
                            c.summarized_through_message_id,
@@ -162,11 +162,11 @@ class ConversationAdapter:
                 "persona": {
                     "name": row["persona_name"],
                     "role": row["role_title"],
-                    # 말투(반말/존댓말)를 결정하는 근거라 반드시 함께 넘긴다.
-                    "description": row["description"],
-                    "relationship_to_user": row["relationship_label"],
                     "prompt_bundle": row["persona_prompt_bundle"],
                 },
+                # 역할은 (페르소나, 시나리오) 조합마다 달라 번들에 넣을 수 없다.
+                # DB 는 어떤 역할인지만 가리키고 내용은 roles 조각이 담는다.
+                "role": row["role_key"],
                 "scenario_goal": row["scenario_goal"],
             },
             "context_summary": row["context_summary"],
@@ -789,7 +789,7 @@ class TTSAdapter:
                 text(
                     """
                     select a.id, a.processing_token, a.storage_path, m.content,
-                           m.persona_emotion, p.voice_key, p.voice_style
+                           m.persona_emotion, p.prompt_bundle_key
                     from public.message_audio a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -811,11 +811,9 @@ class TTSAdapter:
             "emotion": row["persona_emotion"] or "neutral",
             "storage_path": row["storage_path"],
         }
-        # 페르소나에 값이 없으면 키를 싣지 않아 worker 기본값이 그대로 쓰인다.
-        if row["voice_key"]:
-            payload["voice"] = row["voice_key"]
-        if row["voice_style"]:
-            payload["voice_style"] = row["voice_style"]
+        # 음성은 페르소나 번들이 정한다. 번들이 없으면 executor 기본값을 쓴다.
+        if row["prompt_bundle_key"]:
+            payload["prompt_bundle"] = row["prompt_bundle_key"]
         return TargetClaim(
             target_id,
             row["processing_token"],

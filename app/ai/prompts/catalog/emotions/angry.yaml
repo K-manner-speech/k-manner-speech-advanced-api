@@ -1,0 +1,7 @@
+id: angry
+version: 1
+description: 불편한 발화
+priority: 50
+
+prompt: |
+  불편함이 드러나되 과장하지 않고 단호한 어조로 말하세요.
