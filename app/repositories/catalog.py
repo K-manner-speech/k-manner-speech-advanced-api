@@ -62,16 +62,19 @@ class CatalogRepository:
         rows = self._session.execute(
             text(
                 """
-                select distinct s.id, s.practice_type, s.title, s.goal, s.location,
+                select s.id, s.practice_type, s.title, s.goal, s.location,
                        s.difficulty, s.estimated_minutes
                 from public.scenarios s
-                left join public.persona_scenarios ps on ps.scenario_id = s.id
                 where s.is_active = true
                   and (
                     cast(:persona_id as uuid) is null
-                    or ps.persona_id = cast(:persona_id as uuid)
+                    or exists (
+                      select 1 from public.persona_scenarios ps
+                      where ps.scenario_id = s.id
+                        and ps.persona_id = cast(:persona_id as uuid)
+                    )
                   )
-                order by s.id
+                order by s.sort_order, s.id
                 limit :limit
                 """
             ),
