@@ -1,0 +1,15 @@
+# 문서용 미러. 런타임은 이 파일을 읽지 않는다 — README.md 참고.
+# 근거: migrations/versions/9c1f4b0a7d52_kan_16_catalog_tables_and_missing_models.py
+#       (persona 매핑은 migrations/versions/b4d7e2a13c60_persona_scenarios_join_table.py)
+
+id: interview
+title_ko: 면접 상황 대화 연습
+description: 면접 상황 대화 연습
+time_context: 평일 오전
+place_context: 회사 회의실
+communication_goal: 면접관의 질문에 존댓말로 끝까지 답한다
+end_condition: 면접관이 마무리 인사를 하면 종료
+max_turns: 20
+turn_limit_exit_line: null # 전용 마무리 대사 없음 (도입 이전 시나리오)
+opening_line: null
+personas: [doyun]

@@ -1,0 +1,10 @@
+id: doyun
+version: 1
+description: 도윤 / 캠퍼스 훈남 / 처음 만난 또래
+prompts:
+  - category: identities
+    name: friend
+  - category: personalities
+    name: friendly
+  - category: profiles
+    name: doyun_profile

@@ -1,0 +1,13 @@
+id: markdown
+version: 1
+priority: 30
+
+prompt: |
+  # Style
+
+  Markdown 형식을 적극 활용한다.
+
+  - 제목을 사용한다.
+  - 목록을 활용한다.
+  - 표가 적합하면 표를 사용한다.
+  - 코드에는 코드블록을 사용한다.

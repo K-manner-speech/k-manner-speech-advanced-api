@@ -1,0 +1,15 @@
+# 문서용 미러. 런타임은 이 파일을 읽지 않는다 — README.md 참고.
+# 근거: migrations/versions/9c1f4b0a7d52_kan_16_catalog_tables_and_missing_models.py
+#       (persona 매핑은 migrations/versions/b4d7e2a13c60_persona_scenarios_join_table.py)
+
+id: roleplay
+title_ko: 지정한 캐릭터와의 역할극 대화
+description: 지정한 캐릭터와의 역할극 대화
+time_context: null
+place_context: null
+communication_goal: 정해진 배역을 유지하며 상황을 끝까지 이어간다
+end_condition: 사용자가 역할극 종료를 요청하면 종료
+max_turns: 30
+turn_limit_exit_line: null # 전용 마무리 대사 없음 (도입 이전 시나리오)
+opening_line: null
+personas: [doyun]
