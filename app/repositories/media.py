@@ -16,6 +16,9 @@ class MediaRepository:
         self._session = session
         self._jobs = ConversationRepository(session)
 
+    def commit(self) -> None:
+        self._session.commit()
+
     def get_audio(self, user_id: UUID, message_id: UUID) -> dict[str, Any] | None:
         row = (
             self._session.execute(

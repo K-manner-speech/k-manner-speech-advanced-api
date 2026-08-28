@@ -12,6 +12,7 @@ from app.repositories.media import MediaRepository
 from app.schemas.jobs import DomainJobAccepted
 from app.schemas.media import AudioAccessResponse, RepeatRequest
 from app.schemas.rooms import MessageAccepted
+from app.services.idempotency import IdempotencyRepository
 from app.services.media import MediaService, SqlMediaService
 
 router = APIRouter(tags=["media"])
@@ -24,7 +25,14 @@ def get_media_service(
     signer = SupabaseStorageSigner(
         settings.supabase_url, settings.supabase_service_role_key.get_secret_value()
     )
-    return SqlMediaService(MediaRepository(session), signer, settings.user_queue_limit)
+    return SqlMediaService(
+        MediaRepository(session),
+        signer,
+        settings.user_queue_limit,
+        IdempotencyRepository(session),
+        settings.idempotency_lease_seconds,
+        settings.idempotency_retention_seconds,
+    )
 
 
 @router.post(
