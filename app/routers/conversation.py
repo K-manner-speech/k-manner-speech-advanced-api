@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
+from app.adapters.storage import SupabaseStorageSigner
 from app.core.auth import AuthenticatedUser, get_authenticated_user
 from app.core.config import AppSettings
 from app.core.dependencies import get_session, get_settings
@@ -36,6 +37,10 @@ def get_conversation_service(
         IdempotencyRepository(session),
         settings.idempotency_lease_seconds,
         settings.idempotency_retention_seconds,
+        SupabaseStorageSigner(
+            settings.supabase_url,
+            settings.supabase_service_role_key.get_secret_value(),
+        ),
     )
 
 
