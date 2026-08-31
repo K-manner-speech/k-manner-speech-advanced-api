@@ -1222,9 +1222,13 @@ class SessionResultAdapter:
                 text(
                     """
                     select s.id, s.room_id, r.practice_type, r.title,
-                           r.interview_configuration_id
+                           r.interview_configuration_id, r.goal_snapshot,
+                           r.scenario_id, p.name as persona_name, ps.role_key
                     from public.session_results s
                     join public.practice_rooms r on r.id = s.room_id
+                    left join public.personas p on p.id = r.persona_id
+                    left join public.persona_scenarios ps
+                      on ps.persona_id = r.persona_id and ps.scenario_id = r.scenario_id
                     where s.id = :target_id and s.result_status = 'processing'
                       and s.user_id = :user_id and r.user_id = :user_id
                     for update of s
@@ -1254,12 +1258,45 @@ class SessionResultAdapter:
                 text(
                     """
                     select m.sequence_no, m.sender_type, m.content,
-                           q.question_text, q.evaluation_focus
+                           q.question_text, q.evaluation_focus, q.source_evidence
                     from public.room_messages m
                     left join public.interview_answers a on a.message_id = m.id
                     left join public.interview_questions q on q.id = a.question_id
                     where m.room_id = :room_id
                     order by m.sequence_no, m.id
+                    """
+                ),
+                {"room_id": row["room_id"]},
+            ).mappings()
+        )
+        # 시나리오가 성공으로 규정한 조건. 대화가 끝난 지금이 충족 여부를 판정할
+        # 시점이라, 판정에 쓸 목록을 함께 싣는다.
+        success_conditions = list(
+            session.execute(
+                text(
+                    """
+                    select sc.condition_key, sc.description, sc.is_required
+                    from public.scenario_success_conditions sc
+                    where sc.scenario_id = :scenario_id
+                    order by sc.sort_order, sc.condition_key
+                    """
+                ),
+                {"scenario_id": row["scenario_id"]},
+            ).mappings()
+        )
+        # 턴별 채점은 평균 한 숫자로 뭉개면 어느 항목이 반복해서 약했는지 알 수 없다.
+        turn_scores = list(
+            session.execute(
+                text(
+                    """
+                    select m.sequence_no, fs.category, fs.score, fs.max_score,
+                           fs.suggestion_text
+                    from public.room_messages m
+                    join public.turn_feedback f on f.message_id = m.id
+                      and f.analysis_status = 'ready'
+                    join public.feedback_scores fs on fs.feedback_id = f.id
+                    where m.room_id = :room_id
+                    order by m.sequence_no, fs.category
                     """
                 ),
                 {"room_id": row["room_id"]},
@@ -1277,7 +1314,12 @@ class SessionResultAdapter:
                 "configuration_id": str(row["interview_configuration_id"])
                 if row["interview_configuration_id"]
                 else None,
+                "goal": row["goal_snapshot"],
+                "persona_name": row["persona_name"],
+                "relationship": row["role_key"],
+                "success_conditions": [dict(condition) for condition in success_conditions],
                 "messages": [dict(message) for message in messages],
+                "turn_scores": [dict(score) for score in turn_scores],
                 "general_overall_score": int(
                     Decimal(average_feedback_score or 0).quantize(Decimal("1"))
                 ),

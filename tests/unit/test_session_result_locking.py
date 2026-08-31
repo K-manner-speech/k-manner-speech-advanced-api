@@ -16,6 +16,10 @@ def test_session_result_claim_separates_row_lock_from_feedback_aggregate() -> No
         "title": "고객 불만 응대",
         "interview_configuration_id": None,
         "average_feedback_score": 0,
+        "goal_snapshot": "불편에 공감하고 해결 방안을 안내한다",
+        "scenario_id": uuid4(),
+        "persona_name": "박서연 고객",
+        "role_key": "customer",
     }
     session.execute.return_value.mappings.return_value.__iter__.return_value = iter([])
     session.execute.return_value.scalar_one.return_value = 0
