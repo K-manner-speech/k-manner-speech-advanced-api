@@ -23,7 +23,7 @@ class MediaRepository:
         row = (
             self._session.execute(
                 text("""
-                select a.id, a.audio_type, a.storage_path,
+                select a.id, a.audio_type, a.storage_path, a.duration_ms,
                        a.generation_status as status
                 from public.message_audio a
                 join public.room_messages m on m.id = a.message_id

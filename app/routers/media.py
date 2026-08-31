@@ -2,18 +2,21 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.adapters.storage import SupabaseStorageSigner
 from app.core.auth import AuthenticatedUser, get_authenticated_user
 from app.core.config import AppSettings
-from app.core.dependencies import get_session, get_settings
+from app.core.dependencies import get_session, get_session_factory, get_settings
+from app.core.errors import ApiError
 from app.repositories.media import MediaRepository
 from app.schemas.jobs import DomainJobAccepted
 from app.schemas.media import AudioAccessResponse, RepeatRequest
 from app.schemas.rooms import MessageAccepted
 from app.services.idempotency import IdempotencyRepository
 from app.services.media import MediaService, SqlMediaService
+from app.services.tts_streaming import TTSStreamRepository, iter_tts_pcm
 
 router = APIRouter(tags=["media"])
 
@@ -61,6 +64,38 @@ def get_audio(
     service: Annotated[MediaService, Depends(get_media_service)],
 ) -> AudioAccessResponse:
     return service.get_audio(user.id, message_id)
+
+
+@router.get(
+    "/messages/{message_id}/audio/stream",
+    operation_id="message_audio.stream",
+    response_class=StreamingResponse,
+)
+def stream_audio(
+    message_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    session: Annotated[Session, Depends(get_session)],
+) -> StreamingResponse:
+    target = TTSStreamRepository(session).resolve(user.id, message_id)
+    if target is None:
+        raise ApiError(404, "AUDIO_NOT_FOUND", "오디오를 찾을 수 없습니다.")
+    token = target["processing_token"]
+    if token is None:
+        raise ApiError(
+            409,
+            "AUDIO_STREAM_NOT_AVAILABLE",
+            "실시간 음성 스트림을 사용할 수 없습니다.",
+        )
+    return StreamingResponse(
+        iter_tts_pcm(get_session_factory(), target["id"], token),
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Audio-Format": "s16le",
+            "X-Audio-Sample-Rate": "24000",
+            "X-Audio-Channels": "1",
+        },
+    )
 
 
 @router.post(

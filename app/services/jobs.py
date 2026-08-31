@@ -11,7 +11,7 @@ class JobExecutionPolicy:
 
 _MAXIMUM_ATTEMPTS = 3
 _DEADLINES_SECONDS: dict[JobType, int] = {
-    JobType.CONVERSATION_TEXT: 15,
+    JobType.CONVERSATION_TEXT: 45,
     JobType.EMOTION_ANALYSIS: 15,
     JobType.TURN_FEEDBACK: 30,
     JobType.TTS_GENERATION: 45,

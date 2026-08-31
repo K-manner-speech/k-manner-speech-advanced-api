@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import json
+from collections.abc import Iterable, Iterator
 from io import BytesIO
 from typing import Any, TypeVar
+from urllib.request import Request, urlopen
 from wave import open as open_wave
 
 from pydantic import BaseModel, ValidationError
@@ -120,6 +123,38 @@ class GeminiSpeechClient:
             ) from error
         return pcm_to_wav(pcm, sample_rate=24_000, channels=1, sample_width=2)
 
+    def synthesize_stream(
+        self, text: str, voice: str, delivery_instruction: str
+    ) -> Iterator[bytes]:
+        request = Request(
+            self._endpoint,
+            data=json.dumps(
+                {
+                    "model": self._model,
+                    "input": f"{delivery_instruction}\n다음 문장만 한국어로 발화하세요: {text}",
+                    "response_format": {"type": "audio"},
+                    "generation_config": {"speech_config": [{"voice": voice}]},
+                    "stream": True,
+                },
+                ensure_ascii=False,
+            ).encode(),
+            headers={
+                "x-goog-api-key": self._api_key,
+                "Api-Revision": "2026-05-20",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
+                lines = (line.decode("utf-8") for line in response)
+                yield from iter_audio_deltas(lines)
+        except AIProviderError:
+            raise
+        except (OSError, TimeoutError, UnicodeDecodeError) as error:
+            raise AIProviderError("AI_PROVIDER_UNAVAILABLE", retryable=True) from error
+
 
 def _find_audio_data(value: Any) -> str:
     if isinstance(value, dict):
@@ -137,6 +172,29 @@ def _find_audio_data(value: Any) -> str:
             except AIProviderError:
                 continue
     raise AIProviderError("AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True)
+
+
+def iter_audio_deltas(lines: Iterable[str]) -> Iterator[bytes]:
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            event = json.loads(data)
+            delta = event.get("delta", {})
+            if event.get("event_type") != "step.delta" or delta.get("type") != "audio":
+                continue
+            encoded = delta["data"]
+            if not isinstance(encoded, str):
+                raise TypeError
+            yield base64.b64decode(encoded, validate=True)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+            raise AIProviderError(
+                "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
+            ) from error
 
 
 def pcm_to_wav(

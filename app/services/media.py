@@ -53,7 +53,8 @@ class SqlMediaService:
             raise ApiError(404, "AUDIO_NOT_FOUND", "오디오를 찾을 수 없습니다.")
         if row["status"] != "ready":
             return AudioAccessResponse(
-                status=row["status"], signed_url=None, expires_at=None, audio_type=row["audio_type"]
+                status=row["status"], signed_url=None, expires_at=None,
+                audio_type=row["audio_type"], duration_ms=row.get("duration_ms")
             )
         try:
             signed_url, expires_at = self._signer.create_signed_url(
@@ -68,6 +69,7 @@ class SqlMediaService:
             signed_url=signed_url,
             expires_at=expires_at,
             audio_type=row["audio_type"],
+            duration_ms=row.get("duration_ms"),
         )
 
     def retry_tts(

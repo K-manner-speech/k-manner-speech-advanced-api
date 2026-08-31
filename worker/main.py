@@ -25,6 +25,7 @@ from worker.executors import WorkerExecutors
 from worker.heartbeat import HeartbeatRepository
 from worker.queue import QueueWorker
 from worker.sql_queue import SqlDomainAdapter, SqlEvidenceRetriever, SqlQueueRepository
+from worker.tts_streaming import TTSChunkWriter
 
 BASE_QUEUE_NAMES = ("conversation_text", "interactive_ai", "document_analysis")
 
@@ -114,6 +115,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
             evidence_retriever=SqlEvidenceRetriever(session_factory),
             rag_threshold=settings.rag_similarity_threshold,
             context_summary_trigger_tokens=settings.context_summary_trigger_tokens,
+            tts_chunk_writer=TTSChunkWriter(session_factory).append,
         )
         worker = QueueWorker(repository, executors, maximum_attempts=3)
         heartbeat = HeartbeatRepository(session)

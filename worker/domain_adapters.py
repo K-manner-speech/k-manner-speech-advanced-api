@@ -357,23 +357,6 @@ class ConversationAdapter:
         assistant_message_id: UUID,
         room_id: UUID,
     ) -> None:
-        emotion_id = session.execute(
-            text(
-                """
-                insert into public.message_emotion_analysis
-                    (message_id, processing_status, deadline_at)
-                values (:message_id, 'processing',
-                        now() + make_interval(secs => :deadline_seconds))
-                returning id
-                """
-            ),
-            {
-                "message_id": user_message_id,
-                "deadline_seconds": get_job_execution_policy(
-                    JobType.EMOTION_ANALYSIS
-                ).deadline_seconds,
-            },
-        ).scalar_one()
         feedback_id = session.execute(
             text(
                 """
@@ -410,23 +393,19 @@ class ConversationAdapter:
                 ).deadline_seconds,
             },
         ).scalar_one()
+        # TTS와 피드백은 서로 독립적이다. TTS를 먼저 큐에 넣어 음성 재생
+        # 시작 지연을 줄이고, 두 작업은 interactive_ai 워커에서 병렬 처리한다.
         _insert_job(
             session,
             user_id=user_id,
-            job_type=JobType.EMOTION_ANALYSIS,
-            target_id=emotion_id,
+            job_type=JobType.TTS_GENERATION,
+            target_id=audio_id,
         )
         _insert_job(
             session,
             user_id=user_id,
             job_type=JobType.TURN_FEEDBACK,
             target_id=feedback_id,
-        )
-        _insert_job(
-            session,
-            user_id=user_id,
-            job_type=JobType.TTS_GENERATION,
-            target_id=audio_id,
         )
 
     @staticmethod
@@ -835,6 +814,13 @@ class TTSAdapter:
 
     def claim(self, session: Session, job: Mapping[str, Any]) -> TargetClaim | None:
         target_id = _target_id(job, self.job_type)
+        session.execute(
+            text(
+                "delete from public.tts_stream_chunks "
+                "where expires_at <= now() or message_audio_id = :target_id"
+            ),
+            {"target_id": target_id},
+        )
         row = (
             session.execute(
                 text(

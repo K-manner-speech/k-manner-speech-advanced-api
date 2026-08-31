@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from unittest.mock import MagicMock
 from uuid import uuid4
+from wave import open as open_wave
 
 from app.ai.providers.gemini import GeminiSpeechClient
 from app.repositories.conversation import ConversationRepository
 from app.schemas.common import JobType
 from worker.domain_adapters import TTSAdapter
-from worker.executors import WorkerExecutors
+from worker.executors import TTSOutput, WorkerExecutors
 from worker.queue import ClaimedJob
 
 
@@ -20,6 +22,13 @@ class RecordingSpeechProvider:
     def synthesize(self, text: str, voice: str, delivery_instruction: str) -> bytes:
         self.calls.append((text, voice, delivery_instruction))
         return b"wav"
+
+
+class StreamingSpeechProvider(RecordingSpeechProvider):
+    def synthesize_stream(self, text: str, voice: str, delivery_instruction: str):
+        self.calls.append((text, voice, delivery_instruction))
+        yield b"\x00\x00"
+        yield b"\x01\x00"
 
 
 def tts_item(emotion: str) -> ClaimedJob:
@@ -64,6 +73,32 @@ def test_tts_executor_passes_persona_reaction_to_speech_provider() -> None:
     assert (text, voice) == ("괜찮습니다.", "Kore")
     # 감정별 어조는 catalog/emotions 조각에서 온다.
     assert "난처한" in instruction
+
+
+def test_tts_executor_publishes_ordered_pcm_chunks_and_builds_final_wav() -> None:
+    speech = StreamingSpeechProvider()
+    dependency = MagicMock()
+    published: list[tuple[int, bytes]] = []
+    executors = WorkerExecutors(
+        gemini_chat=dependency,
+        token_counter=dependency,
+        gemini_emotion=dependency,
+        gemini_tts=speech,
+        openai_feedback=dependency,
+        openai_interview=dependency,
+        embeddings=dependency,
+        evidence_retriever=dependency,
+        rag_threshold=0.7,
+        context_summary_trigger_tokens=4_000,
+        tts_chunk_writer=lambda _item, sequence, chunk: published.append((sequence, chunk)),
+    )
+
+    output = executors.execute(tts_item("happy"))
+
+    assert isinstance(output, TTSOutput)
+    assert published == [(0, b"\x00\x00\x01\x00")]
+    with open_wave(BytesIO(output.wav), "rb") as audio:
+        assert audio.readframes(2) == b"\x00\x00\x01\x00"
 
 
 def _tts_claim(prompt_bundle_key: str | None) -> object:

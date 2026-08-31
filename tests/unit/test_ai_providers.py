@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from io import BytesIO
@@ -9,7 +10,7 @@ from wave import open as open_wave
 import pytest
 
 from app.ai.interfaces import AIProviderError
-from app.ai.providers.gemini import GeminiStructuredClient, pcm_to_wav
+from app.ai.providers.gemini import GeminiStructuredClient, iter_audio_deltas, pcm_to_wav
 from app.ai.providers.openai import OpenAIEmbeddingClient, OpenAIResponsesClient
 
 
@@ -102,6 +103,18 @@ def test_pcm_to_wav_wraps_mono_24khz_audio() -> None:
         assert audio.getnchannels() == 1
         assert audio.getsampwidth() == 2
         assert audio.readframes(2) == b"\x00\x00\x01\x00"
+
+
+def test_iter_audio_deltas_decodes_only_audio_sse_events() -> None:
+    encoded = base64.b64encode(b"\x00\x01\x02\x03").decode()
+
+    chunks = list(iter_audio_deltas([
+        'data: {"event_type":"step.delta","delta":{"type":"text","text":"x"}}',
+        f'data: {{"event_type":"step.delta","delta":{{"type":"audio","data":"{encoded}"}}}}',
+        "data: [DONE]",
+    ]))
+
+    assert chunks == [b"\x00\x01\x02\x03"]
 
 
 def test_gemini_count_tokens_uses_model_tokenizer(

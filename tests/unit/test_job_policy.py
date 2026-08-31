@@ -42,7 +42,7 @@ def test_undocumented_or_terminal_job_transitions_are_rejected(
 @pytest.mark.parametrize(
     ("job_type", "deadline_seconds"),
     [
-        (JobType.CONVERSATION_TEXT, 15),
+        (JobType.CONVERSATION_TEXT, 45),
         (JobType.EMOTION_ANALYSIS, 15),
         (JobType.TURN_FEEDBACK, 30),
         (JobType.TTS_GENERATION, 45),

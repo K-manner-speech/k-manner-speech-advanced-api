@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Protocol, cast
 from uuid import UUID
@@ -18,6 +19,7 @@ from app.ai.prompts.policies.conversation import (
     CONVERSATION_SUMMARY_INSTRUCTIONS,
     build_conversation_instructions,
 )
+from app.ai.providers.gemini import pcm_to_wav
 from app.ai.rag import EvidenceChunk, chunk_document
 from app.ai.schemas import (
     ConversationReply,
@@ -29,6 +31,31 @@ from app.ai.schemas import (
 )
 from app.schemas.common import JobType
 from worker.queue import ClaimedJob
+
+PCM_SAMPLE_RATE = 24_000
+PCM_SAMPLE_WIDTH_BYTES = 2
+PCM_STREAM_BATCH_SECONDS = 0.5
+PCM_STREAM_BATCH_BYTES = int(
+    PCM_SAMPLE_RATE * PCM_SAMPLE_WIDTH_BYTES * PCM_STREAM_BATCH_SECONDS
+)
+
+
+def batch_pcm_chunks(
+    chunks: Iterable[bytes], batch_bytes: int = PCM_STREAM_BATCH_BYTES
+) -> Iterator[bytes]:
+    """Coalesce provider deltas into DB-sized PCM batches without altering audio."""
+    if batch_bytes <= 0:
+        raise ValueError("batch_bytes must be positive")
+    buffered = bytearray()
+    for chunk in chunks:
+        if not chunk:
+            continue
+        buffered.extend(chunk)
+        while len(buffered) >= batch_bytes:
+            yield bytes(buffered[:batch_bytes])
+            del buffered[:batch_bytes]
+    if buffered:
+        yield bytes(buffered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +152,7 @@ class WorkerExecutors:
         rag_threshold: float,
         context_summary_trigger_tokens: int,
         prompt_composer: PromptComposer | None = None,
+        tts_chunk_writer: Callable[[ClaimedJob, int, bytes], None] | None = None,
     ) -> None:
         self._gemini_chat = gemini_chat
         self._token_counter = token_counter
@@ -137,6 +165,7 @@ class WorkerExecutors:
         self._rag_threshold = rag_threshold
         self._context_summary_trigger_tokens = context_summary_trigger_tokens
         self._prompt_composer = prompt_composer or PromptComposer.default()
+        self._tts_chunk_writer = tts_chunk_writer
 
     def execute(self, item: ClaimedJob, *, repair: bool = False) -> object:
         instructions_suffix = (
@@ -250,14 +279,34 @@ class WorkerExecutors:
         raw_bundle = item.payload.get("prompt_bundle")
         bundle = raw_bundle if isinstance(raw_bundle, str) else None
         voice = self._prompt_composer.voice_for(bundle)
-        return TTSOutput(
-            wav=self._gemini_tts.synthesize(
+        instruction = self._prompt_composer.tts_instruction(
+            bundle, str(item.payload.get("emotion", "neutral"))
+        )
+        stream_method = getattr(self._gemini_tts, "synthesize_stream", None)
+        if self._tts_chunk_writer is not None and callable(stream_method):
+            chunks: list[bytes] = []
+            stream = cast(Callable[[str, str, str], Iterator[bytes]], stream_method)(
                 str(item.payload["text"]),
                 voice.key if voice else "Kore",
-                self._prompt_composer.tts_instruction(
-                    bundle, str(item.payload.get("emotion", "neutral"))
-                ),
-            ),
+                instruction,
+            )
+            for sequence_no, chunk in enumerate(batch_pcm_chunks(stream)):
+                self._tts_chunk_writer(item, sequence_no, chunk)
+                chunks.append(chunk)
+            if not chunks:
+                raise AIProviderError("AI_PROVIDER_SCHEMA_INVALID", retryable=False)
+            wav = pcm_to_wav(
+                b"".join(chunks),
+                sample_rate=PCM_SAMPLE_RATE,
+                channels=1,
+                sample_width=PCM_SAMPLE_WIDTH_BYTES,
+            )
+        else:
+            wav = self._gemini_tts.synthesize(
+                str(item.payload["text"]), voice.key if voice else "Kore", instruction
+            )
+        return TTSOutput(
+            wav=wav,
             storage_path=str(item.payload["storage_path"]),
         )
 
