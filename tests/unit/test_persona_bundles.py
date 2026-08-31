@@ -110,3 +110,25 @@ def test_an_unknown_emotion_falls_back_to_neutral() -> None:
     composer = PromptComposer.default()
 
     assert composer.tts_instruction(None, "elated") == composer.tts_instruction(None, "neutral")
+
+
+def test_turn_feedback_defines_each_scoring_category() -> None:
+    prompt = PromptComposer.default().task_instruction("turn_feedback")
+
+    # 항목 이름만 나열하면 모델이 context_fit 을 "목표 적합성"으로 읽는다.
+    for category in ("honorifics", "courtesy", "context_fit", "naturalness"):
+        assert category in prompt
+    assert "previous_persona_message 에 대한 응답으로 적절한지" in prompt
+
+
+def test_turn_feedback_hands_goal_judgement_to_the_session_result() -> None:
+    prompt = PromptComposer.default().task_instruction("turn_feedback")
+
+    assert "종합 평가가 판정하며, 개별 발화 채점의 몫이 아닙니다" in prompt
+
+
+def test_session_result_keeps_the_goal_judgement() -> None:
+    prompt = PromptComposer.default().task_instruction("session_result")
+
+    assert "success_conditions" in prompt
+    assert "대화 전체" in prompt
