@@ -117,6 +117,46 @@ def test_iter_audio_deltas_decodes_only_audio_sse_events() -> None:
     assert chunks == [b"\x00\x01\x02\x03"]
 
 
+def test_iter_audio_deltas_stops_at_done_without_reading_more_lines() -> None:
+    def stream():
+        yield "data: [DONE]"
+        raise AssertionError("the provider stream was read after its completion marker")
+
+    assert list(iter_audio_deltas(stream())) == []
+
+
+def test_iter_audio_deltas_stops_at_interaction_completed() -> None:
+    encoded = base64.b64encode(b"\x00\x01").decode()
+    audio_event = json.dumps(
+        {"event_type": "step.delta", "delta": {"type": "audio", "data": encoded}}
+    )
+
+    chunks = list(
+        iter_audio_deltas(
+            [
+                f"data: {audio_event}",
+                'data: {"event_type":"interaction.completed","interaction":{"status":"completed"}}',
+                "data: this tail must not be parsed",
+            ]
+        )
+    )
+
+    assert chunks == [b"\x00\x01"]
+
+
+def test_iter_audio_deltas_rejects_eof_without_completion_marker() -> None:
+    encoded = base64.b64encode(b"partial pcm").decode()
+    audio_event = json.dumps(
+        {"event_type": "step.delta", "delta": {"type": "audio", "data": encoded}}
+    )
+
+    with pytest.raises(AIProviderError) as raised:
+        list(iter_audio_deltas([f"data: {audio_event}"]))
+
+    assert raised.value.schema_invalid is True
+    assert raised.value.retryable is False
+
+
 def test_gemini_count_tokens_uses_model_tokenizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

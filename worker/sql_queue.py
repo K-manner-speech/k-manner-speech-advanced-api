@@ -44,6 +44,16 @@ TARGET_STATE: dict[JobType, tuple[str, str, bool]] = {
 }
 
 
+def _expired_feedback_retry_delay(
+    job_type: JobType,
+    attempt_count: int,
+    maximum_attempts: int,
+) -> float | None:
+    if job_type is not JobType.TURN_FEEDBACK or attempt_count >= maximum_attempts:
+        return None
+    return float(2 ** max(0, attempt_count - 1))
+
+
 @dataclass(frozen=True, slots=True)
 class TargetClaim:
     target_id: UUID
@@ -86,14 +96,16 @@ class SqlQueueRepository:
             self._session.execute(
                 text(
                     """
-                    select id, user_id, job_type, transport_attempt_count,
+                    select j.id, j.user_id, j.job_type, j.transport_attempt_count,
                            message_ai_processing_id, message_emotion_analysis_id,
                            message_audio_id, turn_feedback_id,
                            interview_document_analysis_id, interview_configuration_id,
-                           session_result_id
-                    from public.processing_jobs
-                    where status = 'processing' and deadline_at <= now()
-                    for update skip locked
+                           session_result_id, p.timeout_seconds, p.max_attempts
+                    from public.processing_jobs j
+                    join public.processing_timeout_policies p on p.job_type = j.job_type
+                    where j.status = 'processing' and j.deadline_at <= now()
+                      and p.is_active
+                    for update of j skip locked
                     """
                 )
             ).mappings()
@@ -117,6 +129,20 @@ class SqlQueueRepository:
                     deadline_at=datetime.now(UTC),
                     payload={},
                 )
+                retry_delay = _expired_feedback_retry_delay(
+                    job_type,
+                    item.attempt_count,
+                    int(job["max_attempts"]),
+                )
+                if retry_delay is not None:
+                    retried = self._retry_expired_feedback(
+                        item,
+                        retry_delay,
+                        int(job["timeout_seconds"]),
+                    )
+                    if retried:
+                        recovered += 1
+                        continue
                 self._adapters[job_type].fail(
                     self._session, item, "JOB_DEADLINE_EXCEEDED"
                 )
@@ -157,6 +183,68 @@ class SqlQueueRepository:
             self._session.rollback()
             raise
         return recovered
+
+    def _retry_expired_feedback(
+        self,
+        item: ClaimedJob,
+        delay_seconds: float,
+        timeout_seconds: int,
+    ) -> bool:
+        next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+        deadline_at = next_attempt_at + timedelta(seconds=timeout_seconds)
+        new_token = self._session.execute(
+            text(
+                """
+                update public.turn_feedback
+                set processing_token = gen_random_uuid(),
+                    error_code = 'JOB_DEADLINE_EXCEEDED',
+                    next_attempt_at = :next_attempt_at,
+                    deadline_at = :deadline_at, updated_at = now()
+                where id = :target_id and processing_token = :token
+                  and analysis_status = 'processing'
+                returning processing_token
+                """
+            ),
+            {
+                "target_id": item.target_id,
+                "token": item.processing_token,
+                "next_attempt_at": next_attempt_at,
+                "deadline_at": deadline_at,
+            },
+        ).scalar_one_or_none()
+        if new_token is None:
+            return False
+        updated = self._session.execute(
+            text(
+                """
+                update public.processing_jobs
+                set status = 'queued', progress_stage = null,
+                    error_code = null, error_retryable = null, error_meta = null,
+                    next_attempt_at = :next_attempt_at, deadline_at = :deadline_at,
+                    updated_at = now()
+                where id = :job_id and status = 'processing'
+                returning id
+                """
+            ),
+            {
+                "job_id": item.job_id,
+                "next_attempt_at": next_attempt_at,
+                "deadline_at": deadline_at,
+            },
+        ).first()
+        if updated is None:
+            raise RuntimeError("expired feedback job state changed while locked")
+        self._session.execute(
+            text("select pgmq.send(:queue, cast(:payload as jsonb), :delay_at)"),
+            {
+                "queue": self._queue_name,
+                "payload": json.dumps(
+                    {"job_id": str(item.job_id), "user_id": str(item.user_id)}
+                ),
+                "delay_at": next_attempt_at,
+            },
+        )
+        return True
 
     def _target_id(self, job: Mapping[str, Any], job_type: JobType) -> UUID:
         target_id = job[TARGET_COLUMNS[job_type]]

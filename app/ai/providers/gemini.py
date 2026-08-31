@@ -175,15 +175,22 @@ def _find_audio_data(value: Any) -> str:
 
 
 def iter_audio_deltas(lines: Iterable[str]) -> Iterator[bytes]:
+    completed = False
     for raw_line in lines:
         line = raw_line.strip()
         if not line.startswith("data:"):
             continue
         data = line[5:].strip()
-        if not data or data == "[DONE]":
+        if not data:
             continue
+        if data == "[DONE]":
+            completed = True
+            break
         try:
             event = json.loads(data)
+            if event.get("event_type") == "interaction.completed":
+                completed = True
+                break
             delta = event.get("delta", {})
             if event.get("event_type") != "step.delta" or delta.get("type") != "audio":
                 continue
@@ -195,6 +202,10 @@ def iter_audio_deltas(lines: Iterable[str]) -> Iterator[bytes]:
             raise AIProviderError(
                 "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
             ) from error
+    if not completed:
+        raise AIProviderError(
+            "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
+        )
 
 
 def pcm_to_wav(
