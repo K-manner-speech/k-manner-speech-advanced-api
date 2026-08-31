@@ -53,7 +53,7 @@ def test_task_prompts_cover_non_conversation_workers() -> None:
     composer = PromptComposer.default()
 
     assert "여섯 고정 label" in composer.task_instruction("emotion_analysis")
-    assert "높임법" in composer.task_instruction("turn_feedback")
+    assert "honorifics" in composer.task_instruction("turn_feedback")
     assert "지원 문서" in composer.task_instruction("document_analysis")
     assert "{question_count}" in composer.task_instruction("interview_question_generation")
     assert "강점과 개선점" in composer.task_instruction("session_result")
