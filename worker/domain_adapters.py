@@ -637,9 +637,6 @@ class EmotionAdapter:
         )
 
 
-# 채점 대상 문장 앞에 함께 보낼 대화 원문 수. 대화가 길어 요약이 만들어진
-# 방에서도 최근 흐름은 원문으로 봐야 직전 발화에 대한 응답인지 판단할 수 있다.
-FEEDBACK_RECENT_MESSAGE_COUNT = 4
 
 
 class FeedbackAdapter:
@@ -654,7 +651,7 @@ class FeedbackAdapter:
                     select f.id, f.processing_token, m.content, m.room_id,
                            m.sequence_no, r.practice_type, r.title, r.goal_snapshot,
                            p.name as persona_name, ps.role_key,
-                           ctx.summary_text
+                           ctx.summary_text, ctx.summarized_through_message_id
                     from public.turn_feedback f
                     join public.room_messages m on m.id = f.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -674,29 +671,37 @@ class FeedbackAdapter:
         )
         if row is None:
             return None
-        recent = list(
+        # 요약이 덮은 구간 이후는 전부 원문으로 보낸다. 고정 개수로 자르면 요약이
+        # 아직 만들어지지 않은 짧은 대화에서 앞부분이 통째로 사라진다.
+        preceding = list(
             session.execute(
                 text(
                     """
                     select sequence_no, sender_type, content
                     from public.room_messages
                     where room_id = :room_id and sequence_no < :sequence_no
-                    order by sequence_no desc
-                    limit :limit
+                      and (
+                        cast(:through_message_id as uuid) is null
+                        or sequence_no > coalesce((
+                          select sequence_no from public.room_messages
+                          where id = cast(:through_message_id as uuid)
+                            and room_id = :room_id
+                        ), 0)
+                      )
+                    order by sequence_no
                     """
                 ),
                 {
                     "room_id": row["room_id"],
                     "sequence_no": row["sequence_no"],
-                    "limit": FEEDBACK_RECENT_MESSAGE_COUNT,
+                    "through_message_id": row["summarized_through_message_id"],
                 },
             ).mappings()
         )
-        recent.reverse()
         previous_persona_message = next(
             (
                 message["content"]
-                for message in reversed(recent)
+                for message in reversed(preceding)
                 if message["sender_type"] == "persona"
             ),
             None,
@@ -715,7 +720,7 @@ class FeedbackAdapter:
                     "persona_name": row["persona_name"],
                     "relationship": row["role_key"],
                     "previous_persona_message": previous_persona_message,
-                    "recent_messages": [dict(message) for message in recent],
+                    "preceding_messages": [dict(message) for message in preceding],
                     "earlier_summary": row["summary_text"],
                 },
             },
