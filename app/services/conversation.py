@@ -30,6 +30,7 @@ from app.services.idempotency import (
 from app.services.jobs import get_job_execution_policy
 
 ROOM_CREATE_SCOPE = "room.create"
+ROOM_DELETE_SCOPE = "room.delete"
 
 
 class ConversationService(Protocol):
@@ -160,20 +161,75 @@ class SqlConversationService:
         return RoomDetail.model_validate(row)
 
     def delete_room(self, user_id: UUID, room_id: UUID, idempotency_key: UUID) -> None:
-        del idempotency_key
+        claim = None
+        if self._idempotency is not None:
+            claim = self._idempotency.claim(
+                user_id,
+                ROOM_DELETE_SCOPE,
+                idempotency_key,
+                request_fingerprint({"room_id": str(room_id)}),
+                self._idempotency_lease_seconds,
+                self._idempotency_retention_seconds,
+            )
+            if claim.kind == "replay":
+                return
+        if self._repository.get_room(user_id, room_id) is None:
+            raise ApiError(404, "ROOM_NOT_FOUND", "대화방을 찾을 수 없습니다.")
         # 방이 사라지면 message_audio 레코드도 함께 지워져 경로를 찾을 수 없으므로
-        # 삭제 전에 목록을 확보한다.
+        # 삭제 전에 목록을 확보하고 Storage를 먼저 정리한다. 일부 파일만 지워진 뒤
+        # 실패해도 Storage DELETE는 missing object를 성공으로 처리하므로 재시도할 수 있다.
         storage_paths = (
             self._repository.list_room_storage_paths(user_id, room_id)
             if self._storage is not None
             else []
         )
+        # claim과 삭제 대상 목록을 먼저 확정해 외부 Storage 호출 중에는 DB
+        # 트랜잭션을 열어 두지 않는다. 실패 시 persisted claim을 retryable로 바꿀 수 있다.
+        self._repository.commit()
+        try:
+            if self._storage is not None:
+                for path in storage_paths:
+                    self._storage.delete("message-audio", path)
+        except RuntimeError as error:
+            self._repository.rollback()
+            if (
+                self._idempotency is not None
+                and claim is not None
+                and claim.claim_token is not None
+            ):
+                self._idempotency.fail_retryable(
+                    user_id,
+                    ROOM_DELETE_SCOPE,
+                    idempotency_key,
+                    claim.claim_token,
+                    "ROOM_STORAGE_DELETE_FAILED",
+                    self._idempotency_retention_seconds,
+                )
+                self._repository.commit()
+            raise ApiError(
+                503,
+                "ROOM_STORAGE_DELETE_FAILED",
+                "대화방의 음성 파일을 삭제하지 못했습니다.",
+                retryable=True,
+            ) from error
         if not self._repository.delete_room(user_id, room_id):
             raise ApiError(404, "ROOM_NOT_FOUND", "대화방을 찾을 수 없습니다.")
+        if (
+            self._idempotency is not None
+            and claim is not None
+            and claim.claim_token is not None
+        ):
+            self._idempotency.complete(
+                user_id,
+                ROOM_DELETE_SCOPE,
+                idempotency_key,
+                claim.claim_token,
+                204,
+                None,
+                "v1",
+                self._idempotency_retention_seconds,
+            )
         self._repository.commit()
-        if self._storage is not None:
-            for path in storage_paths:
-                self._storage.delete("message-audio", path)
 
     def _message(self, row: dict[str, object]) -> Message:
         status = row.pop("emotion_status", None)
