@@ -17,6 +17,10 @@ from app.ai.interfaces import (
 from app.ai.prompts.composer import PromptComposer
 from app.ai.prompts.policies.conversation import (
     CONVERSATION_SUMMARY_INSTRUCTIONS,
+    INTERVIEW_CLOSING_REPLY,
+    INTERVIEW_CONFIRMATION_REPLY,
+    INTERVIEW_NEUTRAL_FOLLOWUP_REPLY,
+    INTERVIEW_NEXT_QUESTION_PREFIX,
     build_conversation_instructions,
 )
 from app.ai.providers.gemini import pcm_to_wav
@@ -185,7 +189,15 @@ class WorkerExecutors:
         return handlers[item.job_type](item, instructions_suffix)
 
     def _conversation(self, item: ClaimedJob, suffix: str) -> ConversationOutput:
-        input_text = json.dumps(item.payload, ensure_ascii=False, default=str)
+        is_interview = item.payload.get("room", {}).get("practice_type") == "interview"
+        model_payload = item.payload
+        if is_interview:
+            model_payload = {
+                key: value
+                for key, value in item.payload.items()
+                if key != "next_interview_question"
+            }
+        input_text = json.dumps(model_payload, ensure_ascii=False, default=str)
         summary = None
         through_message_id = None
         recent_start_sequence = None
@@ -214,12 +226,11 @@ class WorkerExecutors:
                 through_message_id = UUID(str(last_older["id"]))
                 recent_start_sequence = int(str(recent[0]["sequence_no"]))
                 compact_payload = {
-                    **item.payload,
+                    **model_payload,
                     "context_summary": summary.model_dump(),
                     "messages": recent,
                 }
                 input_text = json.dumps(compact_payload, ensure_ascii=False, default=str)
-        is_interview = item.payload.get("room", {}).get("practice_type") == "interview"
         is_closing_response = bool(item.payload.get("interview_closing_response"))
         room_payload = item.payload.get("room")
         persona_bundle = None
@@ -250,16 +261,80 @@ class WorkerExecutors:
         reply: ConversationReply = self._gemini_chat.generate_structured(
             **generation_kwargs,  # type: ignore[arg-type]
         )
-        if is_closing_response:
+        if is_closing_response or bool(item.payload.get("interview_answer_limit_reached")):
             reply = reply.model_copy(update={
+                "reply": INTERVIEW_CLOSING_REPLY,
                 "interview_answer_complete": True,
                 "interview_should_end": True,
             })
-        elif is_interview and (
-            int(item.payload.get("current_interview_answer_attempt_no", 1)) >= 2
-            or bool(reply.interview_should_end)
-        ):
-            reply = reply.model_copy(update={"interview_answer_complete": True})
+        elif is_interview:
+            reply = reply.model_copy(update={"interview_should_end": False})
+            answer_attempt_no = int(
+                item.payload.get("current_interview_answer_attempt_no", 1)
+            )
+            next_question = item.payload.get("next_interview_question")
+            latest_answer = str(messages[-1].get("content", "")).strip() if messages else ""
+            explicit_non_answer_markers = (
+                "모르겠습니다",
+                "잘 모르",
+                "모르겠",
+                "없습니다",
+                "딱히 없",
+                "기억나지",
+                "생각나지",
+            )
+            is_explicit_non_answer = (
+                answer_attempt_no <= 2
+                and len(latest_answer) <= 40
+                and any(marker in latest_answer for marker in explicit_non_answer_markers)
+            )
+            if is_explicit_non_answer:
+                reply = reply.model_copy(update={"interview_answer_complete": False})
+            if answer_attempt_no >= 3:
+                reply = reply.model_copy(update={"interview_answer_complete": True})
+            if bool(reply.interview_answer_complete):
+                if next_question is None:
+                    reply = reply.model_copy(update={
+                        "reply": INTERVIEW_CLOSING_REPLY,
+                        "interview_answer_complete": True,
+                        "interview_should_end": True,
+                    })
+                elif isinstance(next_question, dict):
+                    next_question_text = str(next_question.get("text", "")).strip()
+                    reply = reply.model_copy(update={
+                        "reply": (
+                            f"{INTERVIEW_NEXT_QUESTION_PREFIX} {next_question_text}"
+                        ).strip(),
+                        "interview_answer_complete": True,
+                        "interview_should_end": False,
+                    })
+            elif answer_attempt_no >= 2:
+                reply = reply.model_copy(update={
+                    "reply": INTERVIEW_CONFIRMATION_REPLY,
+                    "interview_answer_complete": False,
+                    "interview_should_end": False,
+                })
+            else:
+                coaching_markers = (
+                    "고민해 보시는",
+                    "어떨까요",
+                    "권장",
+                    "추천",
+                    "제안",
+                    "하는 것이 좋",
+                    "해 보세요",
+                    "하셨군요",
+                )
+                if any(marker in reply.reply for marker in coaching_markers):
+                    reply = reply.model_copy(update={
+                        "reply": INTERVIEW_NEUTRAL_FOLLOWUP_REPLY,
+                        "interview_answer_complete": False,
+                        "interview_should_end": False,
+                    })
+                reply = reply.model_copy(update={
+                    "interview_answer_complete": False,
+                    "interview_should_end": False,
+                })
         return ConversationOutput(
             reply=reply,
             summary=summary,

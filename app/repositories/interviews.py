@@ -503,11 +503,21 @@ class InterviewRepository:
             return None
         if configuration["status"] != "ready":
             raise RuntimeError("configuration is not ready")
-        count = self._session.execute(
-            text("select count(*) from public.interview_questions where configuration_id = :id"),
-            {"id": configuration_id},
-        ).scalar_one()
-        if count < 1:
+        first_question = (
+            self._session.execute(
+                text("""
+                    select question_text
+                    from public.interview_questions
+                    where configuration_id = :id
+                    order by sequence_no
+                    limit 1
+                """),
+                {"id": configuration_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if first_question is None:
             raise RuntimeError("configuration has no questions")
         self._session.execute(
             text(
@@ -536,5 +546,15 @@ class InterviewRepository:
             )
             .mappings()
             .one()
+        )
+        self._session.execute(
+            text("""
+                insert into public.room_messages
+                    (room_id, sequence_no, sender_type, content,
+                     delivery_status, persona_emotion)
+                values
+                    (:room_id, 1, 'persona', :question_text, 'sent', 'neutral')
+            """),
+            {"room_id": row["id"], "question_text": first_question["question_text"]},
         )
         return dict(row)

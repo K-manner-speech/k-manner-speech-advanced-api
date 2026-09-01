@@ -104,7 +104,13 @@ class ConversationAdapter:
                            answer.answer_attempt_no as interview_answer_attempt_no,
                            question.id as interview_question_id,
                            question.question_text as interview_question_text,
-                           question.sequence_no as interview_question_sequence
+                           question.evaluation_focus as interview_question_evaluation_focus,
+                           question.sequence_no as interview_question_sequence,
+                           (select count(*) from public.interview_questions iq
+                            where iq.configuration_id = r.interview_configuration_id)
+                             as interview_question_count,
+                           (select count(*) from public.interview_answers ia
+                            where ia.room_id = r.id) as interview_answer_count
                     from public.message_ai_processing a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -177,9 +183,15 @@ class ConversationAdapter:
             payload["current_interview_question"] = {
                 "id": str(row["interview_question_id"]),
                 "text": row["interview_question_text"],
+                "evaluation_focus": row["interview_question_evaluation_focus"],
             }
             payload["current_interview_answer_attempt_no"] = int(
                 row["interview_answer_attempt_no"]
+            )
+            question_count = int(row["interview_question_count"] or 0)
+            answer_count = int(row["interview_answer_count"] or 0)
+            payload["interview_answer_limit_reached"] = (
+                question_count > 0 and answer_count >= question_count * 3
             )
             next_question = session.execute(
                 text(
@@ -320,6 +332,7 @@ class ConversationAdapter:
             target["user_message_id"],
             assistant_id,
             target["room_id"],
+            str(target["practice_type"]),
         )
         new_turn_count = session.execute(
             text(
@@ -367,24 +380,27 @@ class ConversationAdapter:
         user_message_id: UUID,
         assistant_message_id: UUID,
         room_id: UUID,
+        practice_type: str,
     ) -> None:
-        feedback_id = session.execute(
-            text(
-                """
-                insert into public.turn_feedback
-                    (message_id, analysis_status, deadline_at)
-                values (:message_id, 'processing',
-                        now() + make_interval(secs => :deadline_seconds))
-                returning id
-                """
-            ),
-            {
-                "message_id": user_message_id,
-                "deadline_seconds": get_job_execution_policy(
-                    JobType.TURN_FEEDBACK
-                ).deadline_seconds,
-            },
-        ).scalar_one()
+        feedback_id = None
+        if practice_type != "interview":
+            feedback_id = session.execute(
+                text(
+                    """
+                    insert into public.turn_feedback
+                        (message_id, analysis_status, deadline_at)
+                    values (:message_id, 'processing',
+                            now() + make_interval(secs => :deadline_seconds))
+                    returning id
+                    """
+                ),
+                {
+                    "message_id": user_message_id,
+                    "deadline_seconds": get_job_execution_policy(
+                        JobType.TURN_FEEDBACK
+                    ).deadline_seconds,
+                },
+            ).scalar_one()
         storage_path = f"{user_id}/{room_id}/{assistant_message_id}.wav"
         audio_id = session.execute(
             text(
@@ -412,12 +428,13 @@ class ConversationAdapter:
             job_type=JobType.TTS_GENERATION,
             target_id=audio_id,
         )
-        _insert_job(
-            session,
-            user_id=user_id,
-            job_type=JobType.TURN_FEEDBACK,
-            target_id=feedback_id,
-        )
+        if feedback_id is not None:
+            _insert_job(
+                session,
+                user_id=user_id,
+                job_type=JobType.TURN_FEEDBACK,
+                target_id=feedback_id,
+            )
 
     @staticmethod
     def _should_complete(

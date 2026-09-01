@@ -128,13 +128,26 @@ class InterviewEvaluation(ContractModel):
         scores: list[InterviewEvaluationScore],
         summary: str | None,
     ) -> InterviewEvaluation:
-        categories = [item.category for item in scores]
-        if len(categories) != len(set(categories)):
-            raise ValueError("duplicate interview evaluation category")
+        # Structured output이 JSON schema를 통과해도 category 값은 중복될 수 있다.
+        # 중복 때문에 평가 전체를 버리지 않고, 같은 항목 중 더 보수적인(낮은)
+        # 점수를 남긴다. 빠진 항목은 아래의 partial 계약으로 그대로 드러낸다.
+        normalized_by_category: dict[
+            InterviewEvaluationCategory, InterviewEvaluationScore
+        ] = {}
+        for item in scores:
+            current = normalized_by_category.get(item.category)
+            if current is None or item.score < current.score:
+                normalized_by_category[item.category] = item
+        normalized_scores = [
+            normalized_by_category[category]
+            for category in INTERVIEW_EVALUATION_CATEGORIES
+            if category in normalized_by_category
+        ]
+        categories = [item.category for item in normalized_scores]
         missing = [
             category for category in INTERVIEW_EVALUATION_CATEGORIES if category not in categories
         ]
-        if not scores:
+        if not normalized_scores:
             status: Literal["succeeded", "partial", "failed"] = "failed"
         elif missing:
             status = "partial"
@@ -142,9 +155,11 @@ class InterviewEvaluation(ContractModel):
             status = "succeeded"
         return cls(
             status=status,
-            overall_score=sum(item.score for item in scores) if status == "succeeded" else None,
+            overall_score=sum(item.score for item in normalized_scores)
+            if status == "succeeded"
+            else None,
             summary=summary,
-            scores=scores,
+            scores=normalized_scores,
             missing_categories=missing,
         )
 

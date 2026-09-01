@@ -389,7 +389,7 @@ class ConversationRepository:
                         :question_id, :room_id, :message_id,
                         coalesce((select max(answer_attempt_no) + 1
                                   from public.interview_answers
-                                  where question_id = :question_id), 1),
+                                  where question_id = :question_id and room_id = :room_id), 1),
                         false
                     )
                     """

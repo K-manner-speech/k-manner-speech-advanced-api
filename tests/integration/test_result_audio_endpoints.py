@@ -59,7 +59,10 @@ class StubResultService:
     def get_room_result(self, authenticated_user_id: Any, room_id: Any) -> SessionResult:
         return SessionResult(
             id=uuid4(),
+            room_id=room_id,
             attempt_no=1,
+            practice_type="free_chat",
+            display_title="현우",
             status="succeeded",
             missing_categories=[],
             created_at=datetime.now(UTC),

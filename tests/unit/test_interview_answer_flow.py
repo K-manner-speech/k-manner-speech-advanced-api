@@ -83,6 +83,7 @@ def test_repository_contains_atomic_interview_answer_contract() -> None:
     assert "insert into public.interview_answers" in source, "AC-T5-INTERVIEW-ORDER"
     assert "current_interview_question_id" in source, "AC-T5-INTERVIEW-ORDER"
     assert "a.is_current" in source, "incomplete answers must keep the current question"
+    assert "where question_id = :question_id and room_id = :room_id" in source
 
 
 def test_worker_marks_answer_current_only_after_ai_completion() -> None:
@@ -94,6 +95,29 @@ def test_worker_marks_answer_current_only_after_ai_completion() -> None:
     assert "interview_answer_complete" in source
     assert "update public.interview_answers" in source
     assert "interview_should_end" in source
+
+
+def test_worker_payload_enforces_total_interview_answer_limit() -> None:
+    source = __import__("inspect").getsource(
+        __import__("worker.domain_adapters", fromlist=["ConversationAdapter"])
+        .ConversationAdapter.claim
+    )
+
+    assert "interview_question_count" in source
+    assert "interview_answer_count" in source
+    assert "answer_count >= question_count * 3" in source
+    assert "interview_answer_limit_reached" in source
+
+
+def test_worker_passes_evaluation_focus_without_resume_evidence() -> None:
+    source = __import__("inspect").getsource(
+        __import__("worker.domain_adapters", fromlist=["ConversationAdapter"])
+        .ConversationAdapter.claim
+    )
+
+    assert "question.evaluation_focus as interview_question_evaluation_focus" in source
+    assert '"evaluation_focus": row["interview_question_evaluation_focus"]' in source
+    assert '"source_evidence"' not in source
 
 
 def test_worker_waits_for_manual_completion_after_final_reply() -> None:

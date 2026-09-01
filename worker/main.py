@@ -105,6 +105,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
                 settings.openai_api_key.get_secret_value(),
                 settings.openai_interview_model,
                 60,
+                max_output_tokens=6000,
             ),
             embeddings=OpenAIEmbeddingClient(
                 settings.openai_api_key.get_secret_value(),

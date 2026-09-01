@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, cast
 from uuid import uuid4
 
@@ -7,6 +8,15 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.repositories.interviews import InterviewRepository
+
+
+def test_create_practice_room_persists_first_question_as_persona_message() -> None:
+    source = inspect.getsource(InterviewRepository.create_practice_room).lower()
+
+    assert "insert into public.room_messages" in source, "IQ-01-FIRST-QUESTION-NOT-PERSISTED"
+    assert "'persona'" in source
+    assert "sequence_no" in source
+    assert "question_text" in source
 
 
 class EmptyMappings:

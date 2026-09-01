@@ -8,6 +8,7 @@ from app.schemas.base import ContractModel
 from app.schemas.common import DomainRef
 
 ResultStatus = Literal["processing", "partial", "succeeded", "failed"]
+PracticeType = Literal["free_chat", "scenario", "interview"]
 InterviewEvaluationCategory = Literal[
     "question_understanding_fit",
     "answer_structure",
@@ -36,8 +37,12 @@ class InterviewEvaluationResponse(ContractModel):
 
 class SessionResultSummary(ContractModel):
     id: UUID
+    room_id: UUID
     attempt_no: int
+    practice_type: PracticeType
+    display_title: str
     status: ResultStatus
+    failure_code: str | None = None
     missing_categories: list[str]
     created_at: datetime
 

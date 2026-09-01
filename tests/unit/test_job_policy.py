@@ -48,7 +48,7 @@ def test_undocumented_or_terminal_job_transitions_are_rejected(
         (JobType.TTS_GENERATION, 45),
         (JobType.INTERVIEW_DOCUMENT_ANALYSIS, 60),
         (JobType.INTERVIEW_CONFIGURATION_GENERATION, 180),
-        (JobType.SESSION_RESULT_GENERATION, 60),
+        (JobType.SESSION_RESULT_GENERATION, 180),
     ],
 )
 def test_job_execution_policy_uses_fixed_deadline_and_attempts(

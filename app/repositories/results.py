@@ -18,7 +18,13 @@ class ResultRepository:
         row = (
             self._session.execute(
                 text("""
-                select s.id, s.attempt_no, s.result_status as status,
+                select s.id, s.room_id, s.attempt_no, r.practice_type,
+                       case when r.practice_type = 'interview'
+                            then '면접 자기소개' else r.title end as display_title,
+                       s.result_status as status,
+                       (select j.error_code from public.processing_jobs j
+                        where j.session_result_id = s.id
+                        order by j.created_at desc, j.id desc limit 1) as failure_code,
                        s.missing_categories, s.created_at, s.overall_score,
                        s.summary, s.interview_setup_snapshot
                 from public.session_results s
@@ -37,11 +43,18 @@ class ResultRepository:
         row = (
             self._session.execute(
                 text("""
-                select id, attempt_no, result_status as status,
-                       missing_categories, created_at, overall_score,
-                       summary, interview_setup_snapshot
-                from public.session_results
-                where id = :result_id and user_id = :user_id
+                select s.id, s.room_id, s.attempt_no, r.practice_type,
+                       case when r.practice_type = 'interview'
+                            then '면접 자기소개' else r.title end as display_title,
+                       s.result_status as status,
+                       (select j.error_code from public.processing_jobs j
+                        where j.session_result_id = s.id
+                        order by j.created_at desc, j.id desc limit 1) as failure_code,
+                       s.missing_categories, s.created_at, s.overall_score,
+                       s.summary, s.interview_setup_snapshot
+                from public.session_results s
+                join public.practice_rooms r on r.id = s.room_id
+                where s.id = :result_id and s.user_id = :user_id
             """),
                 {"result_id": result_id, "user_id": user_id},
             )
@@ -53,11 +66,18 @@ class ResultRepository:
     def list(self, user_id: UUID, limit: int) -> list[dict[str, Any]]:
         rows = self._session.execute(
             text("""
-                select id, attempt_no, result_status as status,
-                       missing_categories, created_at
-                from public.session_results
-                where user_id = :user_id
-                order by created_at desc, id desc limit :limit
+                select s.id, s.room_id, s.attempt_no, r.practice_type,
+                       case when r.practice_type = 'interview'
+                            then '면접 자기소개' else r.title end as display_title,
+                       s.result_status as status,
+                       (select j.error_code from public.processing_jobs j
+                        where j.session_result_id = s.id
+                        order by j.created_at desc, j.id desc limit 1) as failure_code,
+                       s.missing_categories, s.created_at
+                from public.session_results s
+                join public.practice_rooms r on r.id = s.room_id
+                where s.user_id = :user_id
+                order by s.created_at desc, s.id desc limit :limit
             """),
             {"user_id": user_id, "limit": limit},
         ).mappings()
@@ -69,11 +89,19 @@ class ResultRepository:
         target = (
             self._session.execute(
                 text("""
-                select s.id, s.result_status
-                from public.session_results s
-                join public.practice_rooms r on r.id = s.room_id
-                where s.room_id = :room_id and r.user_id = :user_id
-                order by s.attempt_no desc limit 1 for update of s
+                select r.id as room_id, r.practice_type,
+                       r.interview_configuration_id,
+                       s.id, s.result_status
+                from public.practice_rooms r
+                left join lateral (
+                    select sr.id, sr.result_status
+                    from public.session_results sr
+                    where sr.room_id = r.id
+                    order by sr.attempt_no desc limit 1
+                ) s on true
+                where r.id = :room_id and r.user_id = :user_id
+                  and r.status = 'completed'
+                for update of r
             """),
                 {"room_id": room_id, "user_id": user_id},
             )
@@ -82,35 +110,60 @@ class ResultRepository:
         )
         if target is None:
             return None
-        if target["result_status"] != "failed":
+        if target["id"] is None:
+            target_id = self._session.execute(
+                text(
+                    """
+                    insert into public.session_results
+                        (room_id, user_id, result_status, interview_setup_snapshot)
+                    values (:room_id, :user_id, 'processing',
+                            case when :practice_type = 'interview'
+                                 then jsonb_build_object(
+                                     'configuration_id',
+                                     cast(:configuration_id as text))
+                                 else null end)
+                    returning id
+                    """
+                ),
+                {
+                    "room_id": target["room_id"],
+                    "user_id": user_id,
+                    "practice_type": target["practice_type"],
+                    "configuration_id": target["interview_configuration_id"],
+                },
+            ).scalar_one()
+        elif target["result_status"] != "failed":
             raise RuntimeError("result is not retryable")
-        active = self._session.execute(
-            text("""
-                select 1 from public.processing_jobs
-                where session_result_id = :target_id and status in ('queued', 'processing')
-            """),
-            {"target_id": target["id"]},
-        ).first()
-        if active is not None:
-            raise RuntimeError("result already has an active job")
-        self._session.execute(
-            text("""
-                update public.session_results
-                set result_status = 'processing', updated_at = now()
-                where id = :target_id
-            """),
-            {"target_id": target["id"]},
-        )
+        else:
+            target_id = target["id"]
+            active = self._session.execute(
+                text("""
+                    select 1 from public.processing_jobs
+                    where session_result_id = :target_id
+                      and status in ('queued', 'processing')
+                """),
+                {"target_id": target_id},
+            ).first()
+            if active is not None:
+                raise RuntimeError("result already has an active job")
+            self._session.execute(
+                text("""
+                    update public.session_results
+                    set result_status = 'processing', updated_at = now()
+                    where id = :target_id
+                """),
+                {"target_id": target_id},
+            )
         job = self._jobs.insert_job(
             user_id,
             "session_result_generation",
             "session_result_id",
-            target["id"],
+            target_id,
             deadline_seconds,
         )
         self._jobs.enqueue("interactive_ai", job["id"], user_id)
         self._session.commit()
-        return target["id"], job
+        return target_id, job
 
     def delete(self, user_id: UUID, result_id: UUID) -> bool:
         active = self._session.execute(
