@@ -81,6 +81,17 @@ class StubConversationService(ConversationService):
     def delete_room(self, user_id: Any, room_id: Any, idempotency_key: Any) -> None:
         return None
 
+    def complete_interview(self, user_id: Any, room_id: Any) -> Room:
+        return Room(
+            **{
+                **room().model_dump(),
+                "practice_type": "interview",
+                "status": "completed",
+                "ended_reason": "completed",
+                "completed_at": NOW,
+            }
+        )
+
     def list_messages(self, user_id: Any, room_id: Any, cursor: Any, limit: int) -> Any:
         return Page(items=[message()], next_cursor=None)
 
@@ -149,6 +160,9 @@ def test_room_routes_are_exposed() -> None:
         ).status_code
         == 204
     )
+    completed = api.post(f"/api/v1/rooms/{ROOM_ID}/interview-complete", headers=AUTH)
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
 
 
 def test_message_and_job_routes_are_exposed() -> None:

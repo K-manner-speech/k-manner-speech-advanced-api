@@ -333,13 +333,24 @@ class ConversationAdapter:
             ),
             {"room_id": target["room_id"], "user_id": item.user_id},
         ).scalar_one()
-        should_complete = bool(reply.interview_should_end)
-        if target["practice_type"] != "interview":
-            should_complete = self._should_complete(
+        if target["practice_type"] == "interview" and reply.interview_should_end:
+            session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set ended_reason = 'awaiting_user_end', updated_at = now()
+                    where id = :room_id and user_id = :user_id and status = 'in_progress'
+                    """
+                ),
+                {"room_id": target["room_id"], "user_id": item.user_id},
+            )
+        elif (
+            target["practice_type"] != "interview"
+            and self._should_complete(
                 session, target["room_id"], str(target["practice_type"]),
                 int(new_turn_count), target["interview_configuration_id"],
             )
-        if should_complete:
+        ):
             self._complete_room(
                 session,
                 item.user_id,

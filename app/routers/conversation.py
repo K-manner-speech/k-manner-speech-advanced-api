@@ -88,6 +88,19 @@ def delete_room(
     service.delete_room(user.id, room_id, idempotency_key)
 
 
+@router.post(
+    "/rooms/{room_id}/interview-complete",
+    operation_id="interview_room.complete",
+    response_model=Room,
+)
+def complete_interview(
+    room_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> Room:
+    return service.complete_interview(user.id, room_id)
+
+
 @router.get(
     "/rooms/{room_id}/messages", operation_id="room_message.list", response_model=Page[Message]
 )

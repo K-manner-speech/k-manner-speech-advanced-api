@@ -292,7 +292,7 @@ class ConversationRepository:
             self._session.execute(
                 text(
                     """
-                select id, status, practice_type, interview_configuration_id
+                select id, status, practice_type, interview_configuration_id, ended_reason
                 from public.practice_rooms
                 where id = :room_id and user_id = :authenticated_user_id
                 for update
@@ -307,6 +307,8 @@ class ConversationRepository:
             raise LookupError("room not found")
         if room["status"] != "in_progress":
             raise RuntimeError("room is not active")
+        if room["ended_reason"] == "awaiting_user_end":
+            raise RuntimeError("interview is awaiting manual completion")
 
         question_id = request.current_interview_question_id
         if room["practice_type"] == "interview":
@@ -516,6 +518,84 @@ class ConversationRepository:
             .one_or_none()
         )
         return dict(row) if row is not None else None
+
+    def complete_interview(
+        self, authenticated_user_id: UUID, room_id: UUID, deadline_seconds: int
+    ) -> dict[str, Any] | None:
+        target = (
+            self._session.execute(
+                text(
+                    """
+                    select id, interview_configuration_id
+                    from public.practice_rooms
+                    where id = :room_id and user_id = :authenticated_user_id
+                      and practice_type = 'interview' and status = 'in_progress'
+                      and ended_reason = 'awaiting_user_end'
+                    for update
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if target is None:
+            return None
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set status = 'completed', ended_reason = 'completed',
+                        completed_at = now(), updated_at = now()
+                    where id = :room_id and user_id = :authenticated_user_id
+                    returning id, title, practice_type, persona_id, scenario_id, status,
+                              turn_count, ended_reason, started_at, completed_at, updated_at
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one()
+        )
+        self._session.execute(
+            text(
+                """
+                update public.interview_configurations
+                set status = 'completed', completed_at = now(), updated_at = now()
+                where id = :configuration_id and user_id = :authenticated_user_id
+                """
+            ),
+            {
+                "configuration_id": target["interview_configuration_id"],
+                "authenticated_user_id": authenticated_user_id,
+            },
+        )
+        result_id = self._session.execute(
+            text(
+                """
+                insert into public.session_results
+                    (room_id, user_id, result_status, interview_setup_snapshot)
+                values (:room_id, :authenticated_user_id, 'processing',
+                        jsonb_build_object('configuration_id', cast(:configuration_id as text)))
+                returning id
+                """
+            ),
+            {
+                "room_id": room_id,
+                "authenticated_user_id": authenticated_user_id,
+                "configuration_id": target["interview_configuration_id"],
+            },
+        ).scalar_one()
+        job = self.insert_job(
+            authenticated_user_id,
+            "session_result_generation",
+            "session_result_id",
+            result_id,
+            deadline_seconds,
+        )
+        self.enqueue("interactive_ai", job["id"], authenticated_user_id)
+        return dict(row)
 
     def retry_response(
         self,

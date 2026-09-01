@@ -47,6 +47,7 @@ class ConversationService(Protocol):
     ) -> Page[RoomSummary]: ...
     def get_room(self, user_id: UUID, room_id: UUID) -> RoomDetail: ...
     def delete_room(self, user_id: UUID, room_id: UUID, idempotency_key: UUID) -> None: ...
+    def complete_interview(self, user_id: UUID, room_id: UUID) -> Room: ...
     def list_messages(
         self, user_id: UUID, room_id: UUID, cursor: str | None, limit: int
     ) -> Page[Message]: ...
@@ -230,6 +231,21 @@ class SqlConversationService:
                 self._idempotency_retention_seconds,
             )
         self._repository.commit()
+
+    def complete_interview(self, user_id: UUID, room_id: UUID) -> Room:
+        row = self._repository.complete_interview(
+            user_id,
+            room_id,
+            get_job_execution_policy("session_result_generation").deadline_seconds,
+        )
+        if row is None:
+            raise ApiError(
+                409,
+                "INTERVIEW_NOT_READY_TO_END",
+                "아직 수동으로 종료할 수 있는 면접 상태가 아닙니다.",
+            )
+        self._repository.commit()
+        return Room.model_validate(row)
 
     def _message(self, row: dict[str, object]) -> Message:
         status = row.pop("emotion_status", None)

@@ -30,14 +30,14 @@ INTERVIEW_RESPONSE_INSTRUCTIONS = (
     "면접 종료 의사를 표현하면 interview_should_end=true와 "
     "interview_answer_complete=true로 반환하고 새 질문을 하지 마세요. 답변이 완료됐고 "
     "next_interview_question이 있으면 짧게 반응한 뒤 다음 질문 하나만 물으세요. 다음 "
-    "질문이 없으면 interview_should_end=false로 반환하고 '준비한 질문은 모두 "
-    "끝났습니다. 마지막으로 더 하실 말씀이 있나요?'라고 물으세요. "
+    "질문이 없으면 짧게 반응하고 감사와 수고했다는 마지막 면접 종료 멘트만 한 뒤 "
+    "interview_should_end=true로 반환하세요. "
     "준비된 질문 목록이나 순서·개수는 사용자에게 노출하지 마세요."
 )
 
 INTERVIEW_CLOSING_INSTRUCTIONS = (
-    " 사용자는 면접관의 '마지막으로 더 하실 말씀이 있나요?' 질문에 답했습니다. "
-    "답변에 짧게 반응하고 감사와 수고했다는 면접 종료 멘트만 하세요. 새 질문을 하지 "
+    " 준비된 면접 질문은 모두 끝났습니다. 감사와 수고했다는 면접 종료 멘트만 하세요. "
+    "새 질문을 하지 "
     "말고 interview_answer_complete=true, interview_should_end=true로 반환하세요."
 )
 

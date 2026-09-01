@@ -26,6 +26,20 @@ class RejectingRepository:
         self.committed = True
 
 
+class CompletingRepository:
+    def __init__(self, row: dict[str, Any] | None) -> None:
+        self.row = row
+        self.committed = False
+
+    def complete_interview(self, user_id: Any, room_id: Any, deadline_seconds: int) -> Any:
+        del user_id, room_id
+        assert deadline_seconds > 0
+        return self.row
+
+    def commit(self) -> None:
+        self.committed = True
+
+
 def request(question_id: bool = True) -> MessageCreateRequest:
     request_id = uuid4()
     return MessageCreateRequest(
@@ -80,3 +94,49 @@ def test_worker_marks_answer_current_only_after_ai_completion() -> None:
     assert "interview_answer_complete" in source
     assert "update public.interview_answers" in source
     assert "interview_should_end" in source
+
+
+def test_worker_waits_for_manual_completion_after_final_reply() -> None:
+    source = __import__("inspect").getsource(
+        __import__("worker.domain_adapters", fromlist=["ConversationAdapter"])
+        .ConversationAdapter.complete
+    )
+
+    assert "awaiting_user_end" in source
+    assert "if should_complete:" not in source
+
+
+def test_manual_interview_completion_returns_completed_room() -> None:
+    room_id = uuid4()
+    row = {
+        "id": room_id,
+        "title": "모의 면접",
+        "practice_type": "interview",
+        "persona_id": None,
+        "scenario_id": None,
+        "status": "completed",
+        "turn_count": 3,
+        "ended_reason": "completed",
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:10:00Z",
+        "updated_at": "2026-01-01T00:10:00Z",
+    }
+    repository = CompletingRepository(row)
+    service = SqlConversationService(repository, 20, 4)  # type: ignore[arg-type]
+
+    completed = service.complete_interview(uuid4(), room_id)
+
+    assert completed.status == "completed"
+    assert repository.committed is True
+
+
+def test_manual_interview_completion_rejects_invalid_room_state() -> None:
+    repository = CompletingRepository(None)
+    service = SqlConversationService(repository, 20, 4)  # type: ignore[arg-type]
+
+    with pytest.raises(ApiError) as raised:
+        service.complete_interview(uuid4(), uuid4())
+
+    assert raised.value.status_code == 409
+    assert raised.value.code == "INTERVIEW_NOT_READY_TO_END"
+    assert repository.committed is False

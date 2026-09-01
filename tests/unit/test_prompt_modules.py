@@ -33,7 +33,8 @@ def test_interview_prompt_preserves_completion_and_closing_policy() -> None:
     )
 
     assert "추가 질문은 최대 한 번" in interview_prompt
-    assert "마지막으로 더 하실 말씀이 있나요?" in interview_prompt
+    assert "마지막 면접 종료 멘트" in interview_prompt
+    assert "interview_should_end=true" in interview_prompt
     assert "질문 목록이나 순서·개수" in interview_prompt
     assert "새 질문을 하지 말고" in closing_prompt
     assert "interview_should_end=true" in closing_prompt
