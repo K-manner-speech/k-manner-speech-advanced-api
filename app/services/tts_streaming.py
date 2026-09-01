@@ -14,8 +14,9 @@ class TTSStreamRepository:
         self._session = session
 
     def resolve(self, user_id: UUID, message_id: UUID) -> dict[str, Any] | None:
-        row = self._session.execute(
-            text("""
+        row = (
+            self._session.execute(
+                text("""
                 select a.id, a.processing_token, a.generation_status
                 from public.message_audio a
                 join public.room_messages m on m.id = a.message_id
@@ -25,9 +26,21 @@ class TTSStreamRepository:
                   and a.is_current
                 order by a.created_at desc limit 1
             """),
-            {"message_id": message_id, "user_id": user_id},
-        ).mappings().one_or_none()
+                {"message_id": message_id, "user_id": user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
         return dict(row) if row is not None else None
+
+
+def resolve_tts_stream_target(
+    session_factory: sessionmaker[Session],
+    user_id: UUID,
+    message_id: UUID,
+) -> dict[str, Any] | None:
+    with session_factory() as session:
+        return TTSStreamRepository(session).resolve(user_id, message_id)
 
 
 def iter_tts_pcm(
@@ -42,23 +55,29 @@ def iter_tts_pcm(
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         with session_factory() as session:
-            rows = list(session.execute(
-                text("""
+            rows = list(
+                session.execute(
+                    text("""
                     select sequence_no, pcm
                     from public.tts_stream_chunks
                     where message_audio_id = :id and processing_token = :token
                       and sequence_no > :sequence_no and expires_at > now()
                     order by sequence_no
                 """),
-                {"id": message_audio_id, "token": processing_token, "sequence_no": sequence_no},
-            ).mappings())
-            state = session.execute(
-                text(
-                    "select generation_status, processing_token "
-                    "from public.message_audio where id = :id"
-                ),
-                {"id": message_audio_id},
-            ).mappings().one_or_none()
+                    {"id": message_audio_id, "token": processing_token, "sequence_no": sequence_no},
+                ).mappings()
+            )
+            state = (
+                session.execute(
+                    text(
+                        "select generation_status, processing_token "
+                        "from public.message_audio where id = :id"
+                    ),
+                    {"id": message_audio_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
         for row in rows:
             sequence_no = int(row["sequence_no"])
             yield bytes(row["pcm"])

@@ -16,7 +16,7 @@ from app.schemas.media import AudioAccessResponse, RepeatRequest
 from app.schemas.rooms import MessageAccepted
 from app.services.idempotency import IdempotencyRepository
 from app.services.media import MediaService, SqlMediaService
-from app.services.tts_streaming import TTSStreamRepository, iter_tts_pcm
+from app.services.tts_streaming import iter_tts_pcm, resolve_tts_stream_target
 
 router = APIRouter(tags=["media"])
 
@@ -74,9 +74,9 @@ def get_audio(
 def stream_audio(
     message_id: UUID,
     user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
-    session: Annotated[Session, Depends(get_session)],
 ) -> StreamingResponse:
-    target = TTSStreamRepository(session).resolve(user.id, message_id)
+    session_factory = get_session_factory()
+    target = resolve_tts_stream_target(session_factory, user.id, message_id)
     if target is None:
         raise ApiError(404, "AUDIO_NOT_FOUND", "오디오를 찾을 수 없습니다.")
     token = target["processing_token"]
@@ -87,7 +87,7 @@ def stream_audio(
             "실시간 음성 스트림을 사용할 수 없습니다.",
         )
     return StreamingResponse(
-        iter_tts_pcm(get_session_factory(), target["id"], token),
+        iter_tts_pcm(session_factory, target["id"], token),
         media_type="application/octet-stream",
         headers={
             "Cache-Control": "no-store",
@@ -130,6 +130,11 @@ def create_voice_message(
     current_interview_question_id: Annotated[UUID | None, Form()] = None,
 ) -> MessageAccepted:
     return service.upload_voice_message(
-        user.id, room_id, transcript, current_interview_question_id,
-        audio.file.read(10 * 1024 * 1024 + 1), audio.content_type or "", key,
+        user.id,
+        room_id,
+        transcript,
+        current_interview_question_id,
+        audio.file.read(10 * 1024 * 1024 + 1),
+        audio.content_type or "",
+        key,
     )
