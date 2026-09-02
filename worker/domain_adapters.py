@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -30,6 +31,8 @@ from worker.executors import (
 from worker.queue import ClaimedJob
 from worker.runtime import JOB_QUEUE_NAMES
 from worker.sql_queue import TARGET_COLUMNS, TARGET_STATE, TargetClaim
+
+logger = logging.getLogger(__name__)
 
 
 def _target_id(job: Mapping[str, Any], job_type: JobType) -> UUID:
@@ -475,6 +478,11 @@ class ConversationAdapter:
             {"room_id": room_id, "user_id": user_id},
         ).first()
         if eligible is None:
+            logger.info(
+                "goal_progress skipped room=%s turn=%s reason=not_eligible",
+                room_id,
+                turn_count,
+            )
             return
         evaluation_id = session.execute(
             text(
@@ -497,6 +505,11 @@ class ConversationAdapter:
             },
         ).scalar()
         if evaluation_id is None:
+            logger.info(
+                "goal_progress skipped room=%s turn=%s reason=already_evaluated",
+                room_id,
+                turn_count,
+            )
             return
         _insert_job(
             session,
@@ -504,6 +517,7 @@ class ConversationAdapter:
             job_type=JobType.SCENARIO_GOAL_PROGRESS,
             target_id=UUID(str(evaluation_id)),
         )
+        logger.info("goal_progress enqueued room=%s turn=%s", room_id, turn_count)
 
     @staticmethod
     def _should_complete(
