@@ -10,6 +10,7 @@ from uuid import uuid4
 from app.adapters.storage import SupabaseStorageSigner
 from app.ai.providers.gemini import GeminiSpeechClient, GeminiStructuredClient
 from app.ai.providers.openai import OpenAIEmbeddingClient, OpenAIResponsesClient
+from app.core.config import BASE_QUEUE_NAMES
 from app.core.dependencies import get_session_factory, get_settings
 from app.schemas.common import JobType
 from worker.domain_adapters import (
@@ -26,8 +27,6 @@ from worker.heartbeat import HeartbeatRepository
 from worker.queue import QueueWorker
 from worker.sql_queue import SqlDomainAdapter, SqlEvidenceRetriever, SqlQueueRepository
 from worker.tts_streaming import TTSChunkWriter
-
-BASE_QUEUE_NAMES = ("conversation_text", "interactive_ai", "document_analysis")
 
 
 def run_queue(queue_name: str) -> None:

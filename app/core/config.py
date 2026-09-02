@@ -5,6 +5,15 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# base queue 목록의 단일 출처. 큐를 늘릴 때 이 튜플만 고치면
+# 설정 검증과 worker 진입점이 함께 따라온다.
+BASE_QUEUE_NAMES = (
+    "conversation_text",
+    "interactive_ai",
+    "evaluation_ai",
+    "document_analysis",
+)
+
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -31,13 +40,7 @@ class AppSettings(BaseSettings):
     openai_embedding_dimensions: int = Field(default=3072, gt=0)
 
     queue_names: list[str]
-    required_worker_queues: list[str] = Field(
-        default_factory=lambda: [
-            "conversation_text",
-            "interactive_ai",
-            "document_analysis",
-        ]
-    )
+    required_worker_queues: list[str] = Field(default_factory=lambda: list(BASE_QUEUE_NAMES))
     jwt_leeway_seconds: int = Field(default=5, ge=0)
     pagination_limit: int = Field(gt=0)
     user_queue_limit: int = Field(gt=0)
@@ -78,14 +81,7 @@ class AppSettings(BaseSettings):
             raise ValueError("queue names must be non-empty")
         if len(queue_names) != len(set(queue_names)):
             raise ValueError("queue names must be unique")
-        required = {
-            "conversation_text",
-            "conversation_text_dlq",
-            "interactive_ai",
-            "interactive_ai_dlq",
-            "document_analysis",
-            "document_analysis_dlq",
-        }
+        required = {name for base in BASE_QUEUE_NAMES for name in (base, f"{base}_dlq")}
         if set(queue_names) != required:
             raise ValueError("queue names must match the required queues and DLQs")
         return queue_names
@@ -100,7 +96,7 @@ class AppSettings(BaseSettings):
     @field_validator("required_worker_queues")
     @classmethod
     def validate_required_worker_queues(cls, queue_names: list[str]) -> list[str]:
-        allowed = {"conversation_text", "interactive_ai", "document_analysis"}
+        allowed = set(BASE_QUEUE_NAMES)
         if not queue_names or any(not name.strip() for name in queue_names):
             raise ValueError("required worker queues must be non-empty")
         if len(queue_names) != len(set(queue_names)):

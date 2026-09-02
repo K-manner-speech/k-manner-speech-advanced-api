@@ -12,10 +12,10 @@ JOB_QUEUE_NAMES: dict[JobType, str] = {
     JobType.CONVERSATION_TEXT: "conversation_text",
     JobType.EMOTION_ANALYSIS: "interactive_ai",
     JobType.TTS_GENERATION: "interactive_ai",
-    JobType.TURN_FEEDBACK: "interactive_ai",
+    JobType.TURN_FEEDBACK: "evaluation_ai",
     JobType.INTERVIEW_DOCUMENT_ANALYSIS: "document_analysis",
     JobType.INTERVIEW_CONFIGURATION_GENERATION: "document_analysis",
-    JobType.SESSION_RESULT_GENERATION: "interactive_ai",
+    JobType.SESSION_RESULT_GENERATION: "evaluation_ai",
 }
 
 
