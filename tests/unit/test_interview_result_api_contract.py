@@ -57,14 +57,14 @@ def test_interview_evaluation_recovers_duplicate_category_as_partial() -> None:
         [
             InterviewEvaluationScore(
                 category="answer_structure",
-                score=18,
+                score=16,
                 strength="구조가 명확합니다.",
                 suggestion=None,
                 evidence="결론부터 설명했습니다.",
             ),
             InterviewEvaluationScore(
                 category="answer_structure",
-                score=14,
+                score=8,
                 strength=None,
                 suggestion="근거를 보완하세요.",
                 evidence="설명이 짧았습니다.",
@@ -76,5 +76,23 @@ def test_interview_evaluation_recovers_duplicate_category_as_partial() -> None:
     assert evaluation.status == "partial"
     assert evaluation.overall_score is None
     assert len(evaluation.scores) == 1
-    assert evaluation.scores[0].score == 14
+    assert evaluation.scores[0].score == 8
+    assert evaluation.scores[0].strength is None
     assert "answer_structure" not in evaluation.missing_categories
+
+
+def test_interview_evaluation_does_not_expose_average_answer_as_strength() -> None:
+    evaluation = InterviewEvaluation.from_scores(
+        [
+            InterviewEvaluationScore(
+                category="delivery_attitude",
+                score=12,
+                strength="모르는 내용을 솔직하게 인정했습니다.",
+                suggestion="확인 방법을 함께 설명하세요.",
+                evidence="잘 모르겠습니다. 없습니다.",
+            )
+        ],
+        "전달 태도를 평가했습니다.",
+    )
+
+    assert evaluation.scores[0].strength is None

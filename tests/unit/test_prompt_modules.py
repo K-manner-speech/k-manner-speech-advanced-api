@@ -57,7 +57,12 @@ def test_task_prompts_cover_non_conversation_workers() -> None:
     assert "honorifics" in composer.task_instruction("turn_feedback")
     assert "지원 문서" in composer.task_instruction("document_analysis")
     assert "{question_count}" in composer.task_instruction("interview_question_generation")
-    assert "강점과 개선점" in composer.task_instruction("session_result")
+    for task in (
+        "session_result_free_chat",
+        "session_result_scenario",
+        "session_result_interview",
+    ):
+        assert "강점과 개선점" in composer.task_instruction(task)
 
 
 def test_the_question_count_placeholder_still_formats() -> None:

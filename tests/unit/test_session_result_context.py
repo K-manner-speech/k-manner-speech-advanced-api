@@ -50,6 +50,7 @@ def test_the_scenario_goal_reaches_the_evaluator() -> None:
     claim = _claim()
 
     assert claim is not None
+    assert claim.payload["practice_type"] == "scenario"
     assert claim.payload["goal"] == "선배에게 존댓말로 위치를 묻고 감사를 표현한다"
     assert claim.payload["relationship"] == "senior"
     assert claim.payload["persona_name"] == "이서준 선배"

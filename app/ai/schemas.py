@@ -50,11 +50,19 @@ GeneralFeedbackCategory = Literal[
 
 class GeneralFeedbackScore(ContractModel):
     category: GeneralFeedbackCategory
-    score: Annotated[StrictInt, Field(ge=0, le=25)]
+    score: Literal[5, 10, 15, 20, 25]
     strength: str | None
     suggestion: str | None
     original_text: str | None
     recommended_text: str | None
+
+    @model_validator(mode="after")
+    def enforce_behavior_anchor_policy(self) -> GeneralFeedbackScore:
+        if self.score < 20:
+            self.strength = None
+        if self.score <= 10 and not self.suggestion:
+            raise ValueError("low general feedback score requires suggestion")
+        return self
 
 
 class GeneralFeedbackEmotion(ContractModel):
@@ -104,15 +112,23 @@ INTERVIEW_EVALUATION_CATEGORIES: tuple[InterviewEvaluationCategory, ...] = (
     "delivery_attitude",
 )
 
-InterviewScoreValue = Annotated[StrictInt, Field(ge=1, le=20)]
+InterviewScoreValue = Literal[4, 8, 12, 16, 20]
 
 
 class InterviewEvaluationScore(ContractModel):
     category: InterviewEvaluationCategory
-    score: InterviewScoreValue
-    strength: str | None
-    suggestion: str | None
-    evidence: str | None
+    score: InterviewScoreValue = Field(
+        description="행동 기준 1~5단계를 4, 8, 12, 16, 20으로 환산한 점수"
+    )
+    strength: str | None = Field(
+        description="16점 이상이고 실제 긍정 행동 근거가 있을 때만 작성하는 강점"
+    )
+    suggestion: str | None = Field(
+        description="4점 또는 8점이면 반드시 작성하는 구체적인 보완 방법"
+    )
+    evidence: str | None = Field(
+        description="판단 근거가 된 실제 사용자 발화의 짧은 인용"
+    )
 
 
 class InterviewEvaluation(ContractModel):
@@ -142,6 +158,10 @@ class InterviewEvaluation(ContractModel):
             normalized_by_category[category]
             for category in INTERVIEW_EVALUATION_CATEGORIES
             if category in normalized_by_category
+        ]
+        normalized_scores = [
+            item if item.score >= 16 else item.model_copy(update={"strength": None})
+            for item in normalized_scores
         ]
         categories = [item.category for item in normalized_scores]
         missing = [
@@ -184,7 +204,10 @@ class InterviewEvaluation(ContractModel):
         return self
 
 
-class SessionResultOutput(ContractModel):
+class GeneralSessionResultOutput(ContractModel):
     summary: str | None
     items: list[ResultItemOutput]
+
+
+class InterviewSessionResultOutput(GeneralSessionResultOutput):
     interview_scores: list[InterviewEvaluationScore]

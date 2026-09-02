@@ -1324,6 +1324,7 @@ class SessionResultAdapter:
             {
                 "room_id": str(row["room_id"]),
                 "title": row["title"],
+                "practice_type": row["practice_type"],
                 "is_interview": row["practice_type"] == "interview",
                 "configuration_id": str(row["interview_configuration_id"])
                 if row["interview_configuration_id"]

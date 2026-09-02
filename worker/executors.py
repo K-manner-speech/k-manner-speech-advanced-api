@@ -30,8 +30,9 @@ from app.ai.schemas import (
     ConversationSummary,
     EmotionAnalysis,
     GeneralFeedback,
+    GeneralSessionResultOutput,
     InterviewEvaluation,
-    SessionResultOutput,
+    InterviewSessionResultOutput,
 )
 from app.schemas.common import JobType
 from worker.queue import ClaimedJob
@@ -90,7 +91,7 @@ class TTSOutput:
 
 @dataclass(frozen=True, slots=True)
 class FinalSessionOutput:
-    result: SessionResultOutput
+    result: GeneralSessionResultOutput | InterviewSessionResultOutput
     interview_evaluation: InterviewEvaluation | None
 
 
@@ -475,14 +476,32 @@ class WorkerExecutors:
         return ConfigurationOutput(questions=questions, evidence=evidence)
 
     def _session_result(self, item: ClaimedJob, suffix: str) -> FinalSessionOutput:
+        practice_type = item.payload.get("practice_type")
+        if practice_type == "interview":
+            task_name = "session_result_interview"
+            result_type: type[GeneralSessionResultOutput] | type[
+                InterviewSessionResultOutput
+            ] = InterviewSessionResultOutput
+        elif practice_type == "scenario":
+            task_name = "session_result_scenario"
+            result_type = GeneralSessionResultOutput
+        elif practice_type == "free_chat":
+            task_name = "session_result_free_chat"
+            result_type = GeneralSessionResultOutput
+        else:
+            raise AIProviderError(
+                "AI_PROVIDER_SCHEMA_INVALID",
+                retryable=False,
+                schema_invalid=True,
+            )
         generated = self._openai_interview.generate_structured(
-            instructions=self._prompt_composer.task_instruction("session_result") + suffix,
+            instructions=self._prompt_composer.task_instruction(task_name) + suffix,
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
-            schema_name="session_result",
-            result_type=SessionResultOutput,
+            schema_name=task_name,
+            result_type=result_type,
         )
         evaluation = None
-        if bool(item.payload.get("is_interview")):
+        if isinstance(generated, InterviewSessionResultOutput):
             try:
                 evaluation = InterviewEvaluation.from_scores(
                     generated.interview_scores,

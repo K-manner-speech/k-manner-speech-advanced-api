@@ -128,7 +128,7 @@ def test_turn_feedback_hands_goal_judgement_to_the_session_result() -> None:
 
 
 def test_session_result_keeps_the_goal_judgement() -> None:
-    prompt = PromptComposer.default().task_instruction("session_result")
+    prompt = PromptComposer.default().task_instruction("session_result_scenario")
 
     assert "success_conditions" in prompt
     assert "대화 전체" in prompt

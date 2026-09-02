@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from app.ai.prompts.composer import PromptComposer
 from app.ai.schemas import (
     INTERVIEW_EVALUATION_CATEGORIES,
     InterviewEvaluation,
@@ -34,7 +35,7 @@ def test_complete_interview_evaluation_sums_five_integer_scores() -> None:
 def test_partial_interview_evaluation_has_null_total_and_missing_categories() -> None:
     present = INTERVIEW_EVALUATION_CATEGORIES[:-1]
     evaluation = InterviewEvaluation.from_scores(
-        [score(category, 10) for category in present],
+        [score(category, 12) for category in present],
         summary="부분 평가",
     )
 
@@ -51,8 +52,10 @@ def test_empty_interview_evaluation_is_failed() -> None:
     assert evaluation.missing_categories == list(INTERVIEW_EVALUATION_CATEGORIES)
 
 
-@pytest.mark.parametrize("invalid_score", [0, 1.5, 21])
-def test_interview_score_rejects_out_of_range_or_non_integer(invalid_score: object) -> None:
+@pytest.mark.parametrize("invalid_score", [0, 1, 1.5, 10, 14, 21])
+def test_interview_score_rejects_values_outside_behavior_anchors(
+    invalid_score: object,
+) -> None:
     with pytest.raises(ValidationError):
         InterviewEvaluationScore(
             category=INTERVIEW_EVALUATION_CATEGORIES[0],
@@ -63,10 +66,22 @@ def test_interview_score_rejects_out_of_range_or_non_integer(invalid_score: obje
         )
 
 
-def test_interview_evaluation_rejects_duplicate_and_unknown_categories() -> None:
+def test_interview_evaluation_recovers_duplicate_and_rejects_unknown_categories() -> None:
     category = INTERVIEW_EVALUATION_CATEGORIES[0]
-    with pytest.raises(ValueError, match="duplicate"):
-        InterviewEvaluation.from_scores([score(category, 10), score(category, 11)], None)
+    evaluation = InterviewEvaluation.from_scores(
+        [score(category, 16), score(category, 8)], None
+    )
+
+    assert len(evaluation.scores) == 1
+    assert evaluation.scores[0].score == 8
+    assert evaluation.scores[0].strength is None
 
     with pytest.raises(ValidationError):
-        score("unknown", 10)
+        score("unknown", 12)
+
+
+def test_interview_prompt_does_not_treat_non_answers_as_strengths() -> None:
+    prompt = PromptComposer.default().task_instruction("session_result_interview")
+
+    assert '"모르겠습니다"라고 말한 것만으로는 강점이 아닙니다' in prompt
+    assert '"없습니다"를 반복하거나 후속 설명을 시도하지 않은 행동은 보완 근거' in prompt
