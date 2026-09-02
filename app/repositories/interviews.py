@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories.conversation import ConversationRepository
+from app.services.jobs import get_job_queue_name
 
 
 class InterviewRepository:
@@ -210,7 +211,7 @@ class InterviewRepository:
             analysis["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         return {"id": analysis["id"], "version": document["version"]}, job
 
     def get_analysis(self, user_id: UUID, analysis_id: UUID) -> dict[str, Any] | None:
@@ -372,7 +373,7 @@ class InterviewRepository:
             row["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         return dict(row), job
 
     def regenerate_configuration(
@@ -436,7 +437,7 @@ class InterviewRepository:
             configuration_id,
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         self._session.commit()
         return {"id": configuration_id, "version_no": row["version_no"]}, job
 

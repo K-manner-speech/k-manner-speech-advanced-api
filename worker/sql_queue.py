@@ -12,18 +12,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.rag import EvidenceChunk
 from app.schemas.common import JobType
+from app.services.jobs import get_job_target_column
 from worker.queue import ClaimedJob, QueueMessage
 from worker.runtime import JOB_QUEUE_NAMES
 
+# 단일 출처는 app.services.jobs 다.
 TARGET_COLUMNS: dict[JobType, str] = {
-    JobType.CONVERSATION_TEXT: "message_ai_processing_id",
-    JobType.EMOTION_ANALYSIS: "message_emotion_analysis_id",
-    JobType.TTS_GENERATION: "message_audio_id",
-    JobType.TURN_FEEDBACK: "turn_feedback_id",
-    JobType.INTERVIEW_DOCUMENT_ANALYSIS: "interview_document_analysis_id",
-    JobType.INTERVIEW_CONFIGURATION_GENERATION: "interview_configuration_id",
-    JobType.SESSION_RESULT_GENERATION: "session_result_id",
-    JobType.SCENARIO_GOAL_PROGRESS: "room_goal_evaluation_id",
+    job_type: get_job_target_column(job_type) for job_type in JobType
 }
 
 TARGET_STATE: dict[JobType, tuple[str, str, bool]] = {

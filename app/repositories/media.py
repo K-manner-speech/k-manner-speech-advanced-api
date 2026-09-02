@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.conversation import ConversationRepository
 from app.schemas.rooms import MessageCreateRequest
+from app.services.jobs import get_job_queue_name
 
 
 class MediaRepository:
@@ -85,7 +86,7 @@ class MediaRepository:
         job = self._jobs.insert_job(
             user_id, "tts_generation", "message_audio_id", target["id"], deadline_seconds
         )
-        self._jobs.enqueue("interactive_ai", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name("tts_generation"), job["id"], user_id)
         self._session.commit()
         return target["id"], job
 

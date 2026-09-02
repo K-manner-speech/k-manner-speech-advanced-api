@@ -7,16 +7,11 @@ from datetime import datetime
 from typing import Generic, TypeVar
 
 from app.schemas.common import JobType
+from app.services.jobs import get_job_queue_name
 
+# 단일 출처는 app.services.jobs 다. worker 는 그 표를 그대로 쓴다.
 JOB_QUEUE_NAMES: dict[JobType, str] = {
-    JobType.CONVERSATION_TEXT: "conversation_text",
-    JobType.EMOTION_ANALYSIS: "interactive_ai",
-    JobType.TTS_GENERATION: "interactive_ai",
-    JobType.TURN_FEEDBACK: "evaluation_ai",
-    JobType.INTERVIEW_DOCUMENT_ANALYSIS: "document_analysis",
-    JobType.INTERVIEW_CONFIGURATION_GENERATION: "document_analysis",
-    JobType.SESSION_RESULT_GENERATION: "evaluation_ai",
-    JobType.SCENARIO_GOAL_PROGRESS: "evaluation_ai",
+    job_type: get_job_queue_name(job_type) for job_type in JobType
 }
 
 

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
+from app.services.jobs import get_job_queue_name, get_job_target_columns
 
 
 class InterviewQuestionModeError(ValueError):
@@ -421,7 +422,9 @@ class ConversationRepository:
             processing_id,
             deadline_seconds,
         )
-        self.enqueue("conversation_text", job_row["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("conversation_text"), job_row["id"], authenticated_user_id
+        )
         return dict(message_row), job_row
 
     def insert_job(
@@ -432,16 +435,7 @@ class ConversationRepository:
         target_id: UUID,
         deadline_seconds: int,
     ) -> dict[str, Any]:
-        allowed_columns = {
-            "message_ai_processing_id",
-            "message_emotion_analysis_id",
-            "message_audio_id",
-            "turn_feedback_id",
-            "interview_document_analysis_id",
-            "interview_configuration_id",
-            "session_result_id",
-        }
-        if target_column not in allowed_columns:
+        if target_column not in get_job_target_columns():
             raise ValueError("unsupported job target")
         job_id = uuid4()
         row = (
@@ -594,7 +588,9 @@ class ConversationRepository:
             result_id,
             deadline_seconds,
         )
-        self.enqueue("interactive_ai", job["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("session_result_generation"), job["id"], authenticated_user_id
+        )
         return dict(row)
 
     def complete_scenario(
@@ -654,7 +650,9 @@ class ConversationRepository:
             result_id,
             deadline_seconds,
         )
-        self.enqueue("evaluation_ai", job["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("session_result_generation"), job["id"], authenticated_user_id
+        )
         return dict(row)
 
     def dismiss_goal_prompt(
@@ -745,7 +743,9 @@ class ConversationRepository:
             target["id"],
             deadline_seconds,
         )
-        self.enqueue("conversation_text", job["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("conversation_text"), job["id"], authenticated_user_id
+        )
         message = self.get_message(authenticated_user_id, message_id)
         if message is None:
             raise LookupError("message disappeared")
