@@ -23,6 +23,7 @@ TARGET_COLUMNS: dict[JobType, str] = {
     JobType.INTERVIEW_DOCUMENT_ANALYSIS: "interview_document_analysis_id",
     JobType.INTERVIEW_CONFIGURATION_GENERATION: "interview_configuration_id",
     JobType.SESSION_RESULT_GENERATION: "session_result_id",
+    JobType.SCENARIO_GOAL_PROGRESS: "room_goal_evaluation_id",
 }
 
 TARGET_STATE: dict[JobType, tuple[str, str, bool]] = {
@@ -41,6 +42,7 @@ TARGET_STATE: dict[JobType, tuple[str, str, bool]] = {
         True,
     ),
     JobType.SESSION_RESULT_GENERATION: ("session_results", "result_status", False),
+    JobType.SCENARIO_GOAL_PROGRESS: ("room_goal_evaluations", "evaluation_status", True),
 }
 
 
@@ -100,7 +102,8 @@ class SqlQueueRepository:
                            message_ai_processing_id, message_emotion_analysis_id,
                            message_audio_id, turn_feedback_id,
                            interview_document_analysis_id, interview_configuration_id,
-                           session_result_id, p.timeout_seconds, p.max_attempts
+                           session_result_id, room_goal_evaluation_id,
+                           p.timeout_seconds, p.max_attempts
                     from public.processing_jobs j
                     join public.processing_timeout_policies p on p.job_type = j.job_type
                     where j.status = 'processing' and j.deadline_at <= now()
@@ -305,7 +308,7 @@ class SqlQueueRepository:
                            message_ai_processing_id, message_emotion_analysis_id,
                            message_audio_id, turn_feedback_id,
                            interview_document_analysis_id, interview_configuration_id,
-                           session_result_id
+                           session_result_id, room_goal_evaluation_id
                     from public.processing_jobs
                     where id = :job_id and status = 'queued'
                       and (next_attempt_at is null or next_attempt_at <= now())

@@ -33,6 +33,7 @@ from app.ai.schemas import (
     GeneralSessionResultOutput,
     InterviewEvaluation,
     InterviewSessionResultOutput,
+    ScenarioGoalProgress,
 )
 from app.schemas.common import JobType
 from worker.queue import ClaimedJob
@@ -186,6 +187,7 @@ class WorkerExecutors:
             JobType.INTERVIEW_DOCUMENT_ANALYSIS: self._document_analysis,
             JobType.INTERVIEW_CONFIGURATION_GENERATION: self._configuration,
             JobType.SESSION_RESULT_GENERATION: self._session_result,
+            JobType.SCENARIO_GOAL_PROGRESS: self._goal_progress,
         }
         return handlers[item.job_type](item, instructions_suffix)
 
@@ -392,6 +394,14 @@ class WorkerExecutors:
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="turn_feedback",
             result_type=GeneralFeedback,
+        )
+
+    def _goal_progress(self, item: ClaimedJob, suffix: str) -> ScenarioGoalProgress:
+        return self._openai_feedback.generate_structured(
+            instructions=self._prompt_composer.task_instruction("scenario_goal_progress") + suffix,
+            input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
+            schema_name="scenario_goal_progress",
+            result_type=ScenarioGoalProgress,
         )
 
     def _document_analysis(self, item: ClaimedJob, suffix: str) -> DocumentAnalysisOutput:

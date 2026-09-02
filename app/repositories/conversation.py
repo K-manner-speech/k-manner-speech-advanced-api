@@ -597,6 +597,90 @@ class ConversationRepository:
         self.enqueue("interactive_ai", job["id"], authenticated_user_id)
         return dict(row)
 
+    def complete_scenario(
+        self, authenticated_user_id: UUID, room_id: UUID, deadline_seconds: int
+    ) -> dict[str, Any] | None:
+        target = (
+            self._session.execute(
+                text(
+                    """
+                    select id
+                    from public.practice_rooms
+                    where id = :room_id and user_id = :authenticated_user_id
+                      and practice_type in ('scenario', 'free_chat')
+                      and status = 'in_progress'
+                    for update
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if target is None:
+            return None
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set status = 'completed', ended_reason = 'completed',
+                        completed_at = now(), updated_at = now()
+                    where id = :room_id and user_id = :authenticated_user_id
+                    returning id, title, practice_type, persona_id, scenario_id, status,
+                              turn_count, ended_reason, started_at, completed_at, updated_at
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one()
+        )
+        result_id = self._session.execute(
+            text(
+                """
+                insert into public.session_results
+                    (room_id, user_id, result_status)
+                values (:room_id, :authenticated_user_id, 'processing')
+                returning id
+                """
+            ),
+            {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+        ).scalar_one()
+        job = self.insert_job(
+            authenticated_user_id,
+            "session_result_generation",
+            "session_result_id",
+            result_id,
+            deadline_seconds,
+        )
+        self.enqueue("evaluation_ai", job["id"], authenticated_user_id)
+        return dict(row)
+
+    def dismiss_goal_prompt(
+        self, authenticated_user_id: UUID, room_id: UUID
+    ) -> dict[str, Any] | None:
+        """사용자가 "계속하기"를 선택했다. 남은 턴 동안 다시 판정하지 않는다."""
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set ended_reason = null, goal_prompt_dismissed_at = now(),
+                        updated_at = now()
+                    where id = :room_id and user_id = :authenticated_user_id
+                      and status = 'in_progress' and ended_reason = 'goal_achieved'
+                    returning id, title, practice_type, persona_id, scenario_id, status,
+                              turn_count, ended_reason, started_at, completed_at, updated_at
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
+
     def retry_response(
         self,
         authenticated_user_id: UUID,

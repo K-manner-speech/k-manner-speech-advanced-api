@@ -128,7 +128,7 @@ class DatabaseReadinessChecker:
             database=database,
             required_extensions=extension_count == 2,
             pgmq_queues=queue_count == len(self._queue_names),
-            timeout_policies=policy_count == 7,
+            timeout_policies=policy_count == 8,
             config=True,
             worker_heartbeat=heartbeat_count == len(self._required_worker_queues),
         )

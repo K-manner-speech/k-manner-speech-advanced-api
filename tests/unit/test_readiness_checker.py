@@ -34,7 +34,7 @@ class Engine:
 
 def test_readiness_requires_fresh_heartbeat_for_each_base_queue() -> None:
     checker = DatabaseReadinessChecker(
-        Engine([1, 2, 8, 7, 4]),  # type: ignore[arg-type]
+        Engine([1, 2, 8, 8, 4]),  # type: ignore[arg-type]
         [
             "conversation_text",
             "conversation_text_dlq",

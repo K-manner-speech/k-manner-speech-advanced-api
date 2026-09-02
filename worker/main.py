@@ -19,6 +19,7 @@ from worker.domain_adapters import (
     DocumentAnalysisAdapter,
     EmotionAdapter,
     FeedbackAdapter,
+    GoalProgressAdapter,
     SessionResultAdapter,
     TTSAdapter,
 )
@@ -65,6 +66,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
             JobType.INTERVIEW_DOCUMENT_ANALYSIS: DocumentAnalysisAdapter(),
             JobType.INTERVIEW_CONFIGURATION_GENERATION: ConfigurationAdapter(),
             JobType.SESSION_RESULT_GENERATION: SessionResultAdapter(),
+            JobType.SCENARIO_GOAL_PROGRESS: GoalProgressAdapter(),
         }
         adapters = {
             job_type: adapter
@@ -145,6 +147,7 @@ def _run_deadline_reaper(queue_name: str) -> None:
         JobType.INTERVIEW_DOCUMENT_ANALYSIS: DocumentAnalysisAdapter(),
         JobType.INTERVIEW_CONFIGURATION_GENERATION: ConfigurationAdapter(),
         JobType.SESSION_RESULT_GENERATION: SessionResultAdapter(),
+        JobType.SCENARIO_GOAL_PROGRESS: GoalProgressAdapter(),
     }
     adapters = {
         job_type: adapter

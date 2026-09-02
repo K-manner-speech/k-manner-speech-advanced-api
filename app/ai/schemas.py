@@ -34,6 +34,24 @@ class ConversationReply(ContractModel):
     interview_should_end: bool | None = None
 
 
+class ScenarioGoalCondition(ContractModel):
+    condition_key: str = Field(min_length=1, max_length=100)
+    achieved: bool
+    evidence_sequence_no: StrictInt | None = None
+    reasoning: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_evidence_when_achieved(self) -> ScenarioGoalCondition:
+        # 근거 없는 달성은 조기 종료를 잘못 띄운다. 근거를 못 대면 미달성이다.
+        if self.achieved and self.evidence_sequence_no is None:
+            self.achieved = False
+        return self
+
+
+class ScenarioGoalProgress(ContractModel):
+    conditions: list[ScenarioGoalCondition]
+
+
 class EmotionAnalysis(ContractModel):
     label: EmotionLabel
     reasoning: str = Field(min_length=1, max_length=1000)
