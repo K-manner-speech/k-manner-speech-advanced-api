@@ -29,7 +29,7 @@ from worker.executors import (
 )
 from worker.queue import ClaimedJob
 from worker.runtime import JOB_QUEUE_NAMES
-from worker.sql_queue import TARGET_COLUMNS, TargetClaim
+from worker.sql_queue import TARGET_COLUMNS, TARGET_STATE, TargetClaim
 
 
 def _target_id(job: Mapping[str, Any], job_type: JobType) -> UUID:
@@ -1752,6 +1752,19 @@ class SessionResultAdapter:
         )
 
 
+def _token_guarded_targets() -> set[tuple[str, str]]:
+    """processing_token 으로 잠글 수 있는 (테이블, 상태컬럼) 조합.
+
+    TARGET_STATE 에서 파생한다. 목록을 따로 두면 job 을 추가할 때 한쪽만
+    고쳐서, 재시도와 실패 처리만 조용히 동작하지 않게 된다.
+    """
+    return {
+        (table_name, status_column)
+        for table_name, status_column, has_token in TARGET_STATE.values()
+        if has_token
+    }
+
+
 def _retry_target(
     session: Session,
     table_name: str,
@@ -1760,15 +1773,7 @@ def _retry_target(
     code: str,
     next_attempt_at: datetime,
 ) -> None:
-    allowed = {
-        ("message_ai_processing", "processing_status"),
-        ("message_emotion_analysis", "processing_status"),
-        ("message_audio", "generation_status"),
-        ("turn_feedback", "analysis_status"),
-        ("interview_document_analyses", "processing_status"),
-        ("interview_configurations", "status"),
-        ("room_goal_evaluations", "evaluation_status"),
-    }
+    allowed = _token_guarded_targets()
     if (table_name, status_column) not in allowed:
         raise ValueError("unsupported retry target")
     session.execute(
@@ -1797,15 +1802,7 @@ def _fail_target(
     item: ClaimedJob,
     code: str,
 ) -> None:
-    allowed = {
-        ("message_ai_processing", "processing_status"),
-        ("message_emotion_analysis", "processing_status"),
-        ("message_audio", "generation_status"),
-        ("turn_feedback", "analysis_status"),
-        ("interview_document_analyses", "processing_status"),
-        ("interview_configurations", "status"),
-        ("room_goal_evaluations", "evaluation_status"),
-    }
+    allowed = _token_guarded_targets()
     if (table_name, status_column) not in allowed:
         raise ValueError("unsupported failure target")
     completed_assignment = (
