@@ -187,7 +187,11 @@ def test_scoring_jobs_moved_off_the_realtime_queue() -> None:
 
 
 def test_readiness_counts_every_registered_job_type() -> None:
+    """기대 개수만 고치고 조회 목록을 두면 readiness 가 영원히 통과하지 못한다."""
     source = inspect.getsource(DatabaseReadinessChecker.check)
-    expected = len(JOB_QUEUE_NAMES)
 
-    assert f"policy_count == {expected}" in source
+    assert "policy_count == len(JobType)" in source
+    # 세는 대상도 JobType 에서 파생돼야 한다. 목록이 하드코딩되면 잡을 늘려도
+    # count 가 따라 오르지 않아 timeout_policies 가 계속 false 가 된다.
+    assert "[job_type.value for job_type in JobType]" in source
+    assert '"session_result_generation",' not in source

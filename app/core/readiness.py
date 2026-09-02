@@ -6,6 +6,8 @@ from typing import Protocol
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.schemas.common import JobType
+
 
 @dataclass(frozen=True, slots=True)
 class ReadinessReport:
@@ -93,17 +95,7 @@ class DatabaseReadinessChecker:
                         where is_active and job_type = any(:job_types)
                         """
                     ),
-                    {
-                        "job_types": [
-                            "conversation_text",
-                            "emotion_analysis",
-                            "tts_generation",
-                            "turn_feedback",
-                            "interview_document_analysis",
-                            "interview_configuration_generation",
-                            "session_result_generation",
-                        ]
-                    },
+                    {"job_types": [job_type.value for job_type in JobType]},
                 ).scalar_one()
                 heartbeat_count = connection.execute(
                     text(
@@ -128,7 +120,7 @@ class DatabaseReadinessChecker:
             database=database,
             required_extensions=extension_count == 2,
             pgmq_queues=queue_count == len(self._queue_names),
-            timeout_policies=policy_count == 8,
+            timeout_policies=policy_count == len(JobType),
             config=True,
             worker_heartbeat=heartbeat_count == len(self._required_worker_queues),
         )
