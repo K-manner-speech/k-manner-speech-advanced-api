@@ -10,6 +10,5 @@
 -- 인사만 건네고 대화의 주도권을 사용자에게 남긴다.
 
 update public.scenarios
-set opening_message = '어? 오랜만이네. 반갑다!',
-    updated_at = now()
+set opening_message = '어? 오랜만이네. 반갑다!'
 where id = '20000000-0000-4000-8000-000000000003';
