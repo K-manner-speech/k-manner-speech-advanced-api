@@ -1,6 +1,6 @@
 # K-Manner Speech ERD
 
-> 상태: v1.0.0 구현 스키마(`AS-IS`) 기준  
+> 상태: v1.1.0 사용자 종료 반영(`TO-BE`) 기준  
 > 기준일: 2026-09-03  
 > DB: Supabase Postgres `public` schema + RLS  
 > 변경 이력 기준: `supabase/migrations/*.sql`
@@ -94,7 +94,10 @@ erDiagram
         text status
         integer turn_count
         text ended_reason
+        uuid evaluation_cutoff_message_id FK
+        integer completed_turn_count
         timestamptz last_confirmed_turn_at
+        timestamptz completed_at
         timestamptz updated_at
     }
 
@@ -164,6 +167,7 @@ erDiagram
     SCENARIOS ||--o{ PRACTICE_ROOMS : selected_for
     SCENARIOS ||--|{ SCENARIO_SUCCESS_CONDITIONS : defines
     PRACTICE_ROOMS ||--o{ ROOM_MESSAGES : contains
+    ROOM_MESSAGES o|--o{ PRACTICE_ROOMS : evaluation_cutoff
     ROOM_MESSAGES o|--o| ROOM_MESSAGES : replies_to
     ROOM_MESSAGES ||--o| MESSAGE_AI_PROCESSING : has
     ROOM_MESSAGES ||--o| MESSAGE_EMOTION_ANALYSIS : has
@@ -185,8 +189,12 @@ erDiagram
   - 시나리오: `(user_id, persona_id, scenario_id)`당 활성 방 하나
   - 면접: `(user_id, interview_configuration_id)`당 활성 방 하나
 - `room_messages`는 `(room_id, sequence_no)`와 `(room_id, client_request_id)`가 unique다.
-- v1.0.0의 자유채팅·시나리오 생성은 동일 조합의 `in_progress` 방만 재사용한다. `completed` 방은 partial unique index 대상에서 제외되므로 기존 기록을 보존한 채 같은 조합의 새 방을 생성할 수 있다.
-- 시나리오는 최대 턴 도달 시 `status = 'completed'`, `ended_reason = 'completed'`로 저장한다. 면접은 면접관 종료 발화 뒤 `in_progress`, `ended_reason = 'awaiting_user_end'`를 거쳐 사용자의 최종 완료 확정 후 `completed`, `ended_reason = 'completed'`가 된다.
+- 진행 중인 동일 조합을 다시 선택하면 기존 방을 사용한다. 종료된 방은 활성 방 unique index 대상에서 제외되므로 같은 조합으로 새 방을 만들 수 있고, 기존 방은 목록에서 읽기 전용으로 조회한다.
+- 자유채팅과 시나리오의 사용자 종료는 `status = 'completed'`, `ended_reason = 'user_ended'`로 기록한다. 면접에는 임의의 사용자 중간 종료를 허용하지 않으며, `awaiting_user_end` 이후의 최종 완료 확정만 허용한다.
+- `ended_reason`의 신규 canonical 값은 `goal_achieved`, `max_turns_reached`, `interview_completed`, `user_ended`다. v1.0.0 데이터와 배포 중 호환을 위해 기존 `completed`, `awaiting_user_end`도 과도기 허용값으로 유지한다.
+- 완료 방은 `completed_at`과 `ended_reason`이 반드시 존재한다. `in_progress` 방에는 `completed_at`을 기록하지 않는다.
+- `evaluation_cutoff_message_id`는 종료 시 종합 피드백에 포함할 마지막 메시지이며, `completed_turn_count`는 같은 시점의 완료 턴 수 snapshot이다. 종료 후 늦게 완료된 AI 처리 결과는 이 기준을 넘어 결과 평가에 포함하지 않는다.
+- 면접관의 종료 발화가 저장된 면접방은 최종 완료 확정 전까지 `in_progress`, `ended_reason = 'awaiting_user_end'`를 유지한다. 사용자가 최종 `면접 종료`를 확정하면 `completed`, `ended_reason = 'interview_completed'`로 전환한다.
 - AI 응답 처리와 페르소나 감정 분석은 메시지당 각각 하나의 독립 처리 레코드를 가진다.
 - `room_contexts`는 방당 하나이며 요약 기준 메시지가 삭제되면 해당 참조만 `NULL`이 된다.
 
@@ -203,6 +211,7 @@ erDiagram
 | `room_success_condition_progress.room_id → practice_rooms.id` | `CASCADE` |
 | `room_success_condition_progress.condition_id → scenario_success_conditions.id` | `RESTRICT` |
 | `room_success_condition_progress.evidence_message_id → room_messages.id` | `SET NULL` |
+| `practice_rooms.evaluation_cutoff_message_id → room_messages.id` | `SET NULL` |
 
 `profiles`, `user_consents`, `practice_rooms`, `room_messages` 등 기존 기본 테이블의 최초 FK 삭제 정책은 현재 저장소의 incremental migration만으로 확정하지 않는다.
 
@@ -286,6 +295,11 @@ erDiagram
         uuid room_id FK
         integer attempt_no
         text result_status
+        text ended_reason
+        integer completed_turn_count
+        integer duration_seconds
+        uuid evaluation_cutoff_message_id FK
+        boolean insufficient_data
         text_array missing_categories
         jsonb source_snapshot
         jsonb interview_setup_snapshot
@@ -369,6 +383,7 @@ erDiagram
     TURN_FEEDBACK ||--o{ FEEDBACK_EMOTIONS : contains
     AUTH_USERS ||--o{ SESSION_RESULTS : owns_snapshot
     PRACTICE_ROOMS o|--o{ SESSION_RESULTS : produced
+    ROOM_MESSAGES o|--o{ SESSION_RESULTS : evaluation_cutoff
     SESSION_RESULTS ||--o{ RESULT_ITEMS : contains
     SESSION_RESULTS ||--o{ INTERVIEW_EVALUATION_SCORES : evaluated_by
     INTERVIEW_DOCUMENTS o|--o{ RESULT_ITEMS : source
@@ -385,6 +400,8 @@ erDiagram
 - 네 점수가 모두 존재할 때 `turn_feedback.overall_score`는 네 항목 합계로 재계산된다.
 - 피드백 감정은 레코드당 최대 세 개이며 `(feedback_id, emotion_label)`이 unique다.
 - `session_results`는 방과 독립된 결과 snapshot이다. 방이 삭제되어도 결과는 유지되고 `room_id`만 `NULL`이 된다.
+- 결과는 방 종료 당시의 `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id`를 복제한다. Worker는 cutoff 이하의 메시지와 완료된 분석만 평가한다.
+- 평가 가능한 사용자 발화가 없으면 결과 row는 생성하되 `insufficient_data = true`, `overall_score = NULL`로 저장한다. 사용자 종료 자체는 감점 사유가 아니다.
 - `session_results.user_id`가 결과의 최종 owner이며 `result_items`는 부모 결과의 owner를 따른다.
 - `result_items.source_document_id`는 면접 문서를 선택적으로 참조해 결과 근거의 출처를 보존한다.
 - 면접 평가 category는 `question_understanding_fit`, `answer_structure`, `specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude` 다섯 개로 고정하며 각 점수는 1~20 정수다. `(result_id, category)`는 unique다.
@@ -401,6 +418,7 @@ erDiagram
 | `message_audio.replacement_for_id → message_audio.id` | `SET NULL` |
 | `session_results.room_id → practice_rooms.id` | `SET NULL` |
 | `session_results.user_id → auth.users.id` | `CASCADE` |
+| `session_results.evaluation_cutoff_message_id → room_messages.id` | `SET NULL` |
 | `interview_evaluation_scores.result_id → session_results.id` | `CASCADE` |
 | `storage_deletion_jobs.user_id → auth.users.id` | `CASCADE` |
 
@@ -644,6 +662,7 @@ erDiagram
 ```
 
 `idempotency_records`의 unique key는 각 column 단독이 아니라 `(user_id, action_scope, idempotency_key)` 복합 unique다.
+자유채팅·시나리오 사용자 종료의 `action_scope`는 `room.end`이며, 동일 key 재요청은 최초 종료 결과와 결과 생성 Job snapshot을 재생한다.
 `account.delete`의 `in_progress` row는 partial unique index로 사용자당 하나만 허용한다. 성공한 Auth hard delete는 사용자 FK cascade로 이 row까지 즉시 삭제하므로 탈퇴 성공 snapshot은 보존하지 않는다.
 
 ### 5.1 Job 유형·상태·대상
@@ -768,7 +787,7 @@ flowchart LR
 
 - API DTO는 이 ERD의 persistence column을 그대로 노출하지 않는다. 특히 `user_id`, processing token, Storage path와 내부 error message는 서버 내부 값이다.
 - `claim_token`, `request_fingerprint`, `lease_expires_at`, 응답 snapshot과 Provider 원본 오류도 API DTO에 노출하지 않는다. Job API는 안전한 `type/status/progress/error/result_resource`만 노출한다.
-- 면접 준비 단위 생성, `POST /rooms`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다. 면접 준비 생성의 `action_scope`는 API operationId와 같은 `interview_setup.create`다.
+- 면접 준비 단위 생성, `POST /rooms`, `POST /rooms/{room_id}/end`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다. 사용자 종료의 `action_scope`는 `room.end`, 면접 준비 생성은 `interview_setup.create`다.
 - 비동기 처리 상태는 AI 응답, 감정, 음성, 피드백, 문서 분석, 면접 configuration별로 독립적으로 표현한다.
 - 목록 cursor는 반드시 인증 사용자 소유 집합 안에서 계산한다.
 - 문서 version, 분석, 면접 configuration과 결과 snapshot은 API 응답에서 각각의 식별자와 사용 version을 명확히 구분한다.
@@ -785,5 +804,6 @@ flowchart LR
 - `supabase/migrations/20260824070000_priorities_3_4_5_6_schema.sql`
 - `supabase/migrations/20260825090000_processing_jobs_and_idempotency.sql`
 - `supabase/migrations/20260825100000_add_session_result_timeout_policy.sql`
+- `supabase/migrations/20260903150000_add_user_ended_room_snapshots.sql`
 
 스키마 변경 시 migration과 이 문서를 같은 변경 단위에서 갱신한다. 운영 전환 전 비노출 `app` schema로 이전한다면 이 문서는 `TO-BE` ERD가 아니라 새 실제 상태를 나타내도록 함께 개정한다.
