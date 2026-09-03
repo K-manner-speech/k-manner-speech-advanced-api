@@ -29,6 +29,7 @@ from app.ai.schemas import (
     ConversationReply,
     ConversationSummary,
     EmotionAnalysis,
+    EvidenceRelevanceResult,
     GeneralFeedback,
     GeneralSessionResultOutput,
     InterviewEvaluation,
@@ -43,6 +44,7 @@ PCM_STREAM_BATCH_SECONDS = 0.5
 PCM_STREAM_BATCH_BYTES = int(
     PCM_SAMPLE_RATE * PCM_SAMPLE_WIDTH_BYTES * PCM_STREAM_BATCH_SECONDS
 )
+RAG_CANDIDATE_TOP_K = 15
 
 
 def batch_pcm_chunks(
@@ -93,6 +95,29 @@ class TTSOutput:
 class FinalSessionOutput:
     result: GeneralSessionResultOutput | InterviewSessionResultOutput
     interview_evaluation: InterviewEvaluation | None
+
+
+def relevance_score_gap(evidence: list[EvidenceChunk]) -> float | None:
+    if len(evidence) < 2:
+        return None
+    return evidence[0].similarity - evidence[1].similarity
+
+
+def filter_relevant_evidence(
+    evidence: list[EvidenceChunk], result: EvidenceRelevanceResult
+) -> list[EvidenceChunk]:
+    by_id = {chunk.id: chunk for chunk in evidence}
+    decision_ids = {item.chunk_id for item in result.decisions}
+    if decision_ids != set(by_id):
+        raise AIProviderError(
+            "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
+        )
+    return [
+        chunk
+        for chunk in evidence
+        if next(item for item in result.decisions if item.chunk_id == chunk.id).support_level
+        != "unsupported"
+    ]
 
 
 class EvidenceRetriever(Protocol):
@@ -403,8 +428,8 @@ class WorkerExecutors:
         )
         chunks = chunk_document(
             str(item.payload["extracted_text"]),
-            maximum_tokens=500,
-            overlap_tokens=75,
+            maximum_tokens=250,
+            overlap_tokens=50,
             section=str(item.payload.get("document_type", "document")),
         )
         embeddings = self._embeddings.embed([chunk.text for chunk in chunks])
@@ -435,10 +460,40 @@ class WorkerExecutors:
             document_versions=versions,
             query_embedding=query_embedding,
             threshold=self._rag_threshold,
-            top_k=5,
+            top_k=RAG_CANDIDATE_TOP_K,
         )
         if not evidence:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
+        relevance = self._openai_interview.generate_structured(
+            instructions=(
+                self._prompt_composer.task_instruction("interview_evidence_relevance")
+                + suffix
+            ),
+            input_text=json.dumps(
+                {
+                    "conditions": item.payload["conditions"],
+                    "desired_role": item.payload.get("desired_role"),
+                    "top_similarity": evidence[0].similarity,
+                    "top1_top2_gap": relevance_score_gap(evidence),
+                    "evidence": [
+                        {
+                            "chunk_id": str(chunk.id),
+                            "section": chunk.section,
+                            "text": chunk.text,
+                            "similarity": chunk.similarity,
+                        }
+                        for chunk in evidence
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            schema_name="interview_evidence_relevance",
+            result_type=EvidenceRelevanceResult,
+        )
+        evidence = filter_relevant_evidence(evidence, relevance)
+        if not evidence:
+            raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
+        relevance_by_id = {item.chunk_id: item for item in relevance.decisions}
         questions = self._openai_interview.generate_structured(
             instructions=(
                 self._prompt_composer.task_instruction(
@@ -455,6 +510,11 @@ class WorkerExecutors:
                             "document_id": str(chunk.document_id),
                             "section": chunk.section,
                             "text": chunk.text,
+                            "support_level": relevance_by_id[chunk.id].support_level,
+                            "supported_claims": relevance_by_id[chunk.id].supported_claims,
+                            "unsupported_claims": relevance_by_id[
+                                chunk.id
+                            ].unsupported_claims,
                         }
                         for chunk in evidence
                     ],

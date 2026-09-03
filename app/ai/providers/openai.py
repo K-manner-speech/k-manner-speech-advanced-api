@@ -28,6 +28,7 @@ class OpenAIResponsesClient:
         self._timeout_seconds = timeout_seconds
         self._reasoning_effort = reasoning_effort
         self._max_output_tokens = max_output_tokens
+        self._usage = {"input_tokens": 0, "output_tokens": 0, "requests": 0}
 
     def structured_request_body(
         self,
@@ -74,6 +75,11 @@ class OpenAIResponsesClient:
             self._timeout_seconds,
             provider="openai_responses",
         )
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            self._usage["input_tokens"] += int(usage.get("input_tokens", 0))
+            self._usage["output_tokens"] += int(usage.get("output_tokens", 0))
+        self._usage["requests"] += 1
         output_text = self._extract_output_text(payload)
         try:
             return result_type.model_validate_json(output_text)
@@ -81,6 +87,9 @@ class OpenAIResponsesClient:
             raise AIProviderError(
                 "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
             ) from error
+
+    def usage_snapshot(self) -> dict[str, int]:
+        return dict(self._usage)
 
     @staticmethod
     def _extract_output_text(payload: dict[str, Any]) -> str:
@@ -112,6 +121,7 @@ class OpenAIEmbeddingClient:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._dimensions = dimensions
+        self._usage = {"input_tokens": 0, "requests": 0}
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts or any(not text.strip() for text in texts):
@@ -128,6 +138,10 @@ class OpenAIEmbeddingClient:
             self._timeout_seconds,
             provider="openai_embeddings",
         )
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            self._usage["input_tokens"] += int(usage.get("prompt_tokens", 0))
+        self._usage["requests"] += 1
         try:
             ordered = sorted(payload["data"], key=lambda item: item["index"])
             embeddings = [item["embedding"] for item in ordered]
@@ -142,3 +156,6 @@ class OpenAIEmbeddingClient:
             raise AIProviderError(
                 "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
             ) from error
+
+    def usage_snapshot(self) -> dict[str, int]:
+        return dict(self._usage)
