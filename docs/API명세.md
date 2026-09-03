@@ -1,7 +1,7 @@
 # K-Manner Speech API 명세서
 
-> 상태: 구현 전 확정 계약  
-> 기준: `docs/PRD.md`, `docs/화면기획서.md`, `docs/ERD.md`, `docs/아키텍처.md` 및 2026-08-25까지 확정된 아키텍처 결정  
+> 상태: v1.0.0 구현 계약 기준선  
+> 기준: API `main`과 Front `main`의 v1.0.0 구현 및 관련 `docs/` 문서  
 > 범위: HTTP 계약과 계층 책임. 기능 코드, SQL, RLS 구현, Provider prompt 및 DB migration은 포함하지 않는다.
 
 ## 1. 계약 원칙
@@ -165,6 +165,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `room.list` | `GET /api/v1/rooms` | Bearer | - | cursor,limit,status,practice_type | `200 Page[RoomSummary]` | 401,422 | owner 집합 안 cursor |
 | `room.get` | `GET /api/v1/rooms/{room_id}` | Bearer | - | path | `200 RoomDetail` | 401,404 | room owner |
 | `room.delete` | `DELETE /api/v1/rooms/{room_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | queue cancel/stale guard 후 종속 message/context/audio/feedback 삭제; 독립 result 유지 |
+| `interview_room.complete` | `POST /api/v1/rooms/{room_id}/interview-complete` | Bearer | - | 빈 object | `200 Room` | 401,404,409 | 면접관 종료 발화로 `ended_reason = 'awaiting_user_end'`가 된 owner 면접방만 완료 확정; result와 Job 생성 |
 | `room_message.list` | `GET /api/v1/rooms/{room_id}/messages` | Bearer | - | cursor,limit | `200 Page[Message]` | 401,404,422 | room owner; sequence 안정 정렬 |
 | `room_message.create` | `POST /api/v1/rooms/{room_id}/messages` | Bearer | 필수 | `MessageCreateRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | active/turn/현재 interview question 판정; user message+conversation job 원자 확정 |
 | `message_response.retry` | `POST /api/v1/messages/{message_id}/retry-response` | Bearer | 필수 | 빈 object | `202 MessageAccepted` | 401,404,409,429,503 | 기존 실패 response processing target에 새 Job; 새 user message 금지 |
@@ -195,7 +196,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
-Room이 `completed|failed`로 종료될 때 Service가 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. Client create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+Room이 `completed`로 종료될 때 Service가 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 면접은 `interview_room.complete` 호출에서 이를 수행한다. Client result create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
 
 ### 4.7 Interview setup·documents·analysis
 
@@ -311,7 +312,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | Aggregate | 허용 핵심 전이 | API/Worker 책임 |
 | --- | --- | --- |
 | Onboarding | incomplete → completed | complete endpoint만 server validation 후 전이 |
-| Room | created/in_progress → completed 또는 failed | Service가 turn/성공조건/면접질문 판정; 종료 시 result record+Job 자동 생성 |
+| Room | created/in_progress → completed; 면접 종료 준비는 `in_progress + awaiting_user_end` | 시나리오는 최대 턴에서 완료하고, 면접은 면접관 종료 선언 뒤 사용자 완료 확정 시 result record+Job 자동 생성 |
 | Job | queued→processing; processing→queued/succeeded/failed/cancelled | Worker가 domain 상태와 한 transaction에서 전이; terminal immutable |
 | AI/emotion/document | processing→succeeded/failed; retryable failed→processing | Job 성공/실패와 동기화하며 API retry는 기존 domain row+새 Job·처리 토큰을 사용 |
 | Audio | processing→ready/failed | ready 연결 확정 뒤 old object 삭제 |

@@ -1,7 +1,7 @@
 # K-Manner Speech ERD
 
-> 상태: 로컬 MVP 현행(`AS-IS`) 기준  
-> 기준일: 2026-08-25  
+> 상태: v1.0.0 구현 스키마(`AS-IS`) 기준  
+> 기준일: 2026-09-03  
 > DB: Supabase Postgres `public` schema + RLS  
 > 변경 이력 기준: `supabase/migrations/*.sql`
 
@@ -185,6 +185,8 @@ erDiagram
   - 시나리오: `(user_id, persona_id, scenario_id)`당 활성 방 하나
   - 면접: `(user_id, interview_configuration_id)`당 활성 방 하나
 - `room_messages`는 `(room_id, sequence_no)`와 `(room_id, client_request_id)`가 unique다.
+- v1.0.0의 자유채팅·시나리오 생성은 동일 조합의 `in_progress` 방만 재사용한다. `completed` 방은 partial unique index 대상에서 제외되므로 기존 기록을 보존한 채 같은 조합의 새 방을 생성할 수 있다.
+- 시나리오는 최대 턴 도달 시 `status = 'completed'`, `ended_reason = 'completed'`로 저장한다. 면접은 면접관 종료 발화 뒤 `in_progress`, `ended_reason = 'awaiting_user_end'`를 거쳐 사용자의 최종 완료 확정 후 `completed`, `ended_reason = 'completed'`가 된다.
 - AI 응답 처리와 페르소나 감정 분석은 메시지당 각각 하나의 독립 처리 레코드를 가진다.
 - `room_contexts`는 방당 하나이며 요약 기준 메시지가 삭제되면 해당 참조만 `NULL`이 된다.
 
