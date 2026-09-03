@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import time
 import traceback
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
@@ -33,6 +35,12 @@ from worker.tts_streaming import TTSChunkWriter
 def run_queue(queue_name: str) -> None:
     if queue_name not in BASE_QUEUE_NAMES:
         raise ValueError(f"unknown base queue: {queue_name}")
+    # 설정이 없으면 logging 은 WARNING 이상만 내보낸다. worker 가 남기는 진행
+    # 로그가 통째로 사라져 무슨 일이 있었는지 알 수 없으므로 여기서 붙인다.
+    logging.basicConfig(
+        level=os.getenv("WORKER_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     settings = get_settings()
     with ThreadPoolExecutor(
         max_workers=settings.worker_concurrency + 1,
