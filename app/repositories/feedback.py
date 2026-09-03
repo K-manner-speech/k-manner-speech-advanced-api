@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories.conversation import ConversationRepository
+from app.services.jobs import get_job_queue_name
 
 
 class FeedbackRepository:
@@ -119,7 +120,9 @@ class FeedbackRepository:
             target["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("interactive_ai", job["id"], authenticated_user_id)
+        self._jobs.enqueue(
+            get_job_queue_name("emotion_analysis"), job["id"], authenticated_user_id
+        )
         return target["id"], job
 
     def retry_feedback(
@@ -172,7 +175,9 @@ class FeedbackRepository:
             target["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("interactive_ai", job["id"], authenticated_user_id)
+        self._jobs.enqueue(
+            get_job_queue_name("turn_feedback"), job["id"], authenticated_user_id
+        )
         return target["id"], job
 
     def _assert_no_active_job(self, target_column: str, target_id: UUID) -> None:

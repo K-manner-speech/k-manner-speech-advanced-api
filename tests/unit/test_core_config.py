@@ -27,6 +27,8 @@ def complete_settings() -> dict[str, object]:
             "conversation_text_dlq",
             "interactive_ai",
             "interactive_ai_dlq",
+            "evaluation_ai",
+            "evaluation_ai_dlq",
             "document_analysis",
             "document_analysis_dlq",
         ],
@@ -101,6 +103,7 @@ def test_local_worker_and_jwt_defaults_are_safe_and_extensible() -> None:
     assert settings.required_worker_queues == [
         "conversation_text",
         "interactive_ai",
+        "evaluation_ai",
         "document_analysis",
     ]
     assert settings.jwt_leeway_seconds == 5

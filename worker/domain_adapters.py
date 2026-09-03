@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -16,6 +17,7 @@ from app.ai.schemas import (
     EmotionAnalysis,
     GeneralFeedback,
     InterviewEvaluation,
+    ScenarioGoalProgress,
 )
 from app.schemas.common import JobType
 from app.services.jobs import get_job_execution_policy
@@ -28,7 +30,9 @@ from worker.executors import (
 )
 from worker.queue import ClaimedJob
 from worker.runtime import JOB_QUEUE_NAMES
-from worker.sql_queue import TARGET_COLUMNS, TargetClaim
+from worker.sql_queue import TARGET_COLUMNS, TARGET_STATE, TargetClaim
+
+logger = logging.getLogger(__name__)
 
 
 def _target_id(job: Mapping[str, Any], job_type: JobType) -> UUID:
@@ -371,6 +375,14 @@ class ConversationAdapter:
                 str(target["practice_type"]),
                 target["interview_configuration_id"],
             )
+        elif target["practice_type"] == "scenario":
+            self._enqueue_goal_progress(
+                session,
+                item.user_id,
+                target["room_id"],
+                assistant_id,
+                int(new_turn_count),
+            )
         return True
 
     @staticmethod
@@ -435,6 +447,78 @@ class ConversationAdapter:
                 job_type=JobType.TURN_FEEDBACK,
                 target_id=feedback_id,
             )
+
+    @staticmethod
+    def _enqueue_goal_progress(
+        session: Session,
+        user_id: UUID,
+        room_id: UUID,
+        assistant_message_id: UUID,
+        turn_count: int,
+    ) -> None:
+        """시나리오에서만, 아직 선택하지 않은 방에만 판정을 건다.
+
+        필수 조건은 "상대에게서 무언가를 받아냈는가" 하나라 첫 턴에 달성될 수
+        있다. 길을 묻는 시나리오는 질문 한 번으로 끝난다. 사용자가 "계속하기"를
+        눌렀거나 이미 달성 표시가 붙은 방은 다시 묻지 않는다.
+        """
+        if turn_count < 1:
+            return
+        eligible = session.execute(
+            text(
+                """
+                select 1
+                from public.practice_rooms r
+                join public.scenario_success_conditions c on c.scenario_id = r.scenario_id
+                where r.id = :room_id and r.user_id = :user_id
+                  and r.practice_type = 'scenario' and r.status = 'in_progress'
+                  and r.ended_reason is null and r.goal_prompt_dismissed_at is null
+                limit 1
+                """
+            ),
+            {"room_id": room_id, "user_id": user_id},
+        ).first()
+        if eligible is None:
+            logger.info(
+                "goal_progress skipped room=%s turn=%s reason=not_eligible",
+                room_id,
+                turn_count,
+            )
+            return
+        evaluation_id = session.execute(
+            text(
+                """
+                insert into public.room_goal_evaluations
+                    (room_id, message_id, turn_no, evaluation_status, deadline_at)
+                values (:room_id, :message_id, :turn_no, 'processing',
+                        now() + make_interval(secs => :deadline_seconds))
+                on conflict (room_id, message_id) do nothing
+                returning id
+                """
+            ),
+            {
+                "room_id": room_id,
+                "message_id": assistant_message_id,
+                "turn_no": turn_count,
+                "deadline_seconds": get_job_execution_policy(
+                    JobType.SCENARIO_GOAL_PROGRESS
+                ).deadline_seconds,
+            },
+        ).scalar()
+        if evaluation_id is None:
+            logger.info(
+                "goal_progress skipped room=%s turn=%s reason=already_evaluated",
+                room_id,
+                turn_count,
+            )
+            return
+        _insert_job(
+            session,
+            user_id=user_id,
+            job_type=JobType.SCENARIO_GOAL_PROGRESS,
+            target_id=UUID(str(evaluation_id)),
+        )
+        logger.info("goal_progress enqueued room=%s turn=%s", room_id, turn_count)
 
     @staticmethod
     def _should_complete(
@@ -832,6 +916,222 @@ class FeedbackAdapter:
 
     def fail(self, session: Session, item: ClaimedJob, code: str) -> None:
         _fail_target(session, "turn_feedback", "analysis_status", item, code)
+
+
+class GoalProgressAdapter:
+    """시나리오 성공 조건의 달성 여부를 판정해 조기 종료 후보를 표시한다.
+
+    방을 직접 완료시키지 않는다. 판정은 답장보다 늦게 도착하므로 여기서 방을
+    끝내면 그 틈에 답변을 보낸 사용자가 오류를 받는다. 표시만 남기고 최종
+    결정은 사용자가 한다.
+    """
+
+    job_type = JobType.SCENARIO_GOAL_PROGRESS
+
+    def claim(self, session: Session, job: Mapping[str, Any]) -> TargetClaim | None:
+        target_id = _target_id(job, self.job_type)
+        row = (
+            session.execute(
+                text(
+                    """
+                    select e.id, e.processing_token, e.room_id, e.turn_no,
+                           r.title, r.goal_snapshot, r.scenario_id, ps.role_key
+                    from public.room_goal_evaluations e
+                    join public.practice_rooms r on r.id = e.room_id
+                    left join public.persona_scenarios ps
+                      on ps.persona_id = r.persona_id and ps.scenario_id = r.scenario_id
+                    where e.id = :target_id and e.evaluation_status = 'processing'
+                      and r.user_id = :user_id
+                    for update of e
+                    """
+                ),
+                {"target_id": target_id, "user_id": job["user_id"]},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        conditions = list(
+            session.execute(
+                text(
+                    """
+                    select c.condition_key, c.description, c.is_required,
+                           coalesce(p.achieved, false) as already_achieved
+                    from public.scenario_success_conditions c
+                    left join public.room_success_condition_progress p
+                      on p.condition_id = c.id and p.room_id = :room_id
+                    where c.scenario_id = :scenario_id
+                    order by c.sort_order
+                    """
+                ),
+                {"room_id": row["room_id"], "scenario_id": row["scenario_id"]},
+            ).mappings()
+        )
+        if not conditions:
+            return None
+        messages = list(
+            session.execute(
+                text(
+                    """
+                    select sequence_no, sender_type, content
+                    from public.room_messages
+                    where room_id = :room_id
+                    order by sequence_no
+                    """
+                ),
+                {"room_id": row["room_id"]},
+            ).mappings()
+        )
+        return TargetClaim(
+            target_id,
+            row["processing_token"],
+            "provider_processing",
+            {
+                "goal": row["goal_snapshot"],
+                "situation": row["title"],
+                "relationship": row["role_key"],
+                "conditions": [
+                    {
+                        "condition_key": condition["condition_key"],
+                        "description": condition["description"],
+                    }
+                    for condition in conditions
+                ],
+                "already_achieved": [
+                    condition["condition_key"]
+                    for condition in conditions
+                    if condition["already_achieved"]
+                ],
+                "messages": [dict(message) for message in messages],
+            },
+        )
+
+    def complete(self, session: Session, item: ClaimedJob, output: object) -> bool:
+        if not isinstance(output, ScenarioGoalProgress):
+            raise TypeError("goal progress output type mismatch")
+        locked = (
+            session.execute(
+                text(
+                    """
+                    select e.room_id, r.scenario_id
+                    from public.room_goal_evaluations e
+                    join public.practice_rooms r on r.id = e.room_id
+                    where e.id = :target_id and e.processing_token = :token
+                      and e.evaluation_status = 'processing'
+                    for update of e
+                    """
+                ),
+                {"target_id": item.target_id, "token": item.processing_token},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if locked is None:
+            return False
+        room_id = locked["room_id"]
+        for condition in output.conditions:
+            # 미달도 이유와 함께 남긴다. 남기지 않으면 카드가 뜨지 않았을 때
+            # 어느 조건이 왜 막았는지 확인할 방법이 없다.
+            #
+            # 달성은 이미 일어난 사실이라 뒤집히지 않지만 미달은 "아직" 일 뿐이다.
+            # 워커가 동시에 돌아 늦은 턴의 판정이 먼저 끝날 수 있으므로, 이미
+            # 달성으로 기록된 조건은 갱신 대상에서 제외해 되돌아가지 않게 한다.
+            session.execute(
+                text(
+                    """
+                    insert into public.room_success_condition_progress
+                        (room_id, condition_id, achieved, evidence_message_id,
+                         reasoning, evaluated_at)
+                    select :room_id, c.id, :achieved, m.id, :reasoning, now()
+                    from public.scenario_success_conditions c
+                    left join public.room_messages m
+                      on m.room_id = :room_id
+                     and m.sequence_no = :evidence_sequence_no
+                    where c.scenario_id = :scenario_id
+                      and c.condition_key = :condition_key
+                    on conflict (room_id, condition_id) do update
+                    set achieved = excluded.achieved,
+                        evidence_message_id = excluded.evidence_message_id,
+                        reasoning = excluded.reasoning,
+                        evaluated_at = now()
+                    where not public.room_success_condition_progress.achieved
+                    """
+                ),
+                {
+                    "room_id": room_id,
+                    "scenario_id": locked["scenario_id"],
+                    "condition_key": condition.condition_key,
+                    "achieved": condition.achieved,
+                    "reasoning": condition.reasoning,
+                    "evidence_sequence_no": condition.evidence_sequence_no,
+                },
+            )
+        remaining_required = session.execute(
+            text(
+                """
+                select count(*)
+                from public.scenario_success_conditions c
+                where c.scenario_id = :scenario_id and c.is_required
+                  and not exists (
+                    select 1 from public.room_success_condition_progress p
+                    where p.room_id = :room_id and p.condition_id = c.id and p.achieved
+                  )
+                """
+            ),
+            {"room_id": room_id, "scenario_id": locked["scenario_id"]},
+        ).scalar_one()
+        all_required_met = int(remaining_required) == 0
+        if all_required_met:
+            # ended_reason 을 'awaiting_user_end' 로 두면 메시지 전송이 서버에서
+            # 막힌다. 시나리오의 조기 종료는 강제가 아니라 제안이므로 다른 값을 쓴다.
+            session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set ended_reason = 'goal_achieved', updated_at = now()
+                    where id = :room_id and status = 'in_progress'
+                      and ended_reason is null and goal_prompt_dismissed_at is null
+                    """
+                ),
+                {"room_id": room_id},
+            )
+        session.execute(
+            text(
+                """
+                update public.room_goal_evaluations
+                set evaluation_status = 'succeeded', achieved = :achieved,
+                    error_code = null, evaluated_at = now(), updated_at = now()
+                where id = :target_id and processing_token = :token
+                """
+            ),
+            {
+                "target_id": item.target_id,
+                "token": item.processing_token,
+                "achieved": all_required_met,
+            },
+        )
+        return True
+
+    def retry(
+        self,
+        session: Session,
+        item: ClaimedJob,
+        code: str,
+        next_attempt_at: datetime,
+    ) -> None:
+        _retry_target(
+            session,
+            "room_goal_evaluations",
+            "evaluation_status",
+            item,
+            code,
+            next_attempt_at,
+        )
+
+    def fail(self, session: Session, item: ClaimedJob, code: str) -> None:
+        # 판정이 실패해도 대화는 그대로 굴러가고 max_turns 로 자연 종료된다.
+        _fail_target(session, "room_goal_evaluations", "evaluation_status", item, code)
 
 
 class TTSAdapter:
@@ -1464,6 +1764,19 @@ class SessionResultAdapter:
         )
 
 
+def _token_guarded_targets() -> set[tuple[str, str]]:
+    """processing_token 으로 잠글 수 있는 (테이블, 상태컬럼) 조합.
+
+    TARGET_STATE 에서 파생한다. 목록을 따로 두면 job 을 추가할 때 한쪽만
+    고쳐서, 재시도와 실패 처리만 조용히 동작하지 않게 된다.
+    """
+    return {
+        (table_name, status_column)
+        for table_name, status_column, has_token in TARGET_STATE.values()
+        if has_token
+    }
+
+
 def _retry_target(
     session: Session,
     table_name: str,
@@ -1472,14 +1785,7 @@ def _retry_target(
     code: str,
     next_attempt_at: datetime,
 ) -> None:
-    allowed = {
-        ("message_ai_processing", "processing_status"),
-        ("message_emotion_analysis", "processing_status"),
-        ("message_audio", "generation_status"),
-        ("turn_feedback", "analysis_status"),
-        ("interview_document_analyses", "processing_status"),
-        ("interview_configurations", "status"),
-    }
+    allowed = _token_guarded_targets()
     if (table_name, status_column) not in allowed:
         raise ValueError("unsupported retry target")
     session.execute(
@@ -1508,17 +1814,14 @@ def _fail_target(
     item: ClaimedJob,
     code: str,
 ) -> None:
-    allowed = {
-        ("message_ai_processing", "processing_status"),
-        ("message_emotion_analysis", "processing_status"),
-        ("message_audio", "generation_status"),
-        ("turn_feedback", "analysis_status"),
-        ("interview_document_analyses", "processing_status"),
-        ("interview_configurations", "status"),
-    }
+    allowed = _token_guarded_targets()
     if (table_name, status_column) not in allowed:
         raise ValueError("unsupported failure target")
-    completed_assignment = "" if table_name == "turn_feedback" else "completed_at = now(),"
+    completed_assignment = (
+        ""
+        if table_name in {"turn_feedback", "room_goal_evaluations"}
+        else "completed_at = now(),"
+    )
     session.execute(
         text(
             f"""

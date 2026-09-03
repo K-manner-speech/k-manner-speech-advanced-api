@@ -34,6 +34,26 @@ class ConversationReply(ContractModel):
     interview_should_end: bool | None = None
 
 
+class ScenarioGoalCondition(ContractModel):
+    # OpenAI 구조화 출력은 모든 속성이 required 에 있어야 한다. 기본값을 주면
+    # required 에서 빠져 스키마 자체가 400 으로 거부되므로, nullable 로만 둔다.
+    condition_key: str = Field(min_length=1, max_length=100)
+    achieved: bool
+    evidence_sequence_no: StrictInt | None
+    reasoning: str | None = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def require_evidence_when_achieved(self) -> ScenarioGoalCondition:
+        # 근거 없는 달성은 조기 종료를 잘못 띄운다. 근거를 못 대면 미달성이다.
+        if self.achieved and self.evidence_sequence_no is None:
+            self.achieved = False
+        return self
+
+
+class ScenarioGoalProgress(ContractModel):
+    conditions: list[ScenarioGoalCondition]
+
+
 class EmotionAnalysis(ContractModel):
     label: EmotionLabel
     reasoning: str = Field(min_length=1, max_length=1000)

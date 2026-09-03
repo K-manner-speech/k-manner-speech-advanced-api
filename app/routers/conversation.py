@@ -101,6 +101,32 @@ def complete_interview(
     return service.complete_interview(user.id, room_id)
 
 
+@router.post(
+    "/rooms/{room_id}/complete",
+    operation_id="practice_room.complete",
+    response_model=Room,
+)
+def complete_scenario(
+    room_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> Room:
+    return service.complete_scenario(user.id, room_id)
+
+
+@router.post(
+    "/rooms/{room_id}/continue",
+    operation_id="practice_room.continue",
+    response_model=Room,
+)
+def continue_after_goal(
+    room_id: UUID,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> Room:
+    return service.continue_after_goal(user.id, room_id)
+
+
 @router.get(
     "/rooms/{room_id}/messages", operation_id="room_message.list", response_model=Page[Message]
 )

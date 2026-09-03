@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories.conversation import ConversationRepository
+from app.services.jobs import get_job_queue_name
 
 
 class ResultRepository:
@@ -161,7 +162,9 @@ class ResultRepository:
             target_id,
             deadline_seconds,
         )
-        self._jobs.enqueue("interactive_ai", job["id"], user_id)
+        self._jobs.enqueue(
+            get_job_queue_name("session_result_generation"), job["id"], user_id
+        )
         self._session.commit()
         return target_id, job
 

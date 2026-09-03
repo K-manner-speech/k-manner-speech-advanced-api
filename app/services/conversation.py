@@ -48,6 +48,8 @@ class ConversationService(Protocol):
     def get_room(self, user_id: UUID, room_id: UUID) -> RoomDetail: ...
     def delete_room(self, user_id: UUID, room_id: UUID, idempotency_key: UUID) -> None: ...
     def complete_interview(self, user_id: UUID, room_id: UUID) -> Room: ...
+    def complete_scenario(self, user_id: UUID, room_id: UUID) -> Room: ...
+    def continue_after_goal(self, user_id: UUID, room_id: UUID) -> Room: ...
     def list_messages(
         self, user_id: UUID, room_id: UUID, cursor: str | None, limit: int
     ) -> Page[Message]: ...
@@ -243,6 +245,32 @@ class SqlConversationService:
                 409,
                 "INTERVIEW_NOT_READY_TO_END",
                 "아직 수동으로 종료할 수 있는 면접 상태가 아닙니다.",
+            )
+        self._repository.commit()
+        return Room.model_validate(row)
+
+    def complete_scenario(self, user_id: UUID, room_id: UUID) -> Room:
+        row = self._repository.complete_scenario(
+            user_id,
+            room_id,
+            get_job_execution_policy("session_result_generation").deadline_seconds,
+        )
+        if row is None:
+            raise ApiError(
+                409,
+                "ROOM_NOT_ACTIVE",
+                "종료할 수 있는 연습이 아닙니다.",
+            )
+        self._repository.commit()
+        return Room.model_validate(row)
+
+    def continue_after_goal(self, user_id: UUID, room_id: UUID) -> Room:
+        row = self._repository.dismiss_goal_prompt(user_id, room_id)
+        if row is None:
+            raise ApiError(
+                409,
+                "GOAL_PROMPT_NOT_PENDING",
+                "목표 달성 안내가 표시된 상태가 아닙니다.",
             )
         self._repository.commit()
         return Room.model_validate(row)

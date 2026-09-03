@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import time
-import traceback
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -10,6 +11,7 @@ from uuid import uuid4
 from app.adapters.storage import SupabaseStorageSigner
 from app.ai.providers.gemini import GeminiSpeechClient, GeminiStructuredClient
 from app.ai.providers.openai import OpenAIEmbeddingClient, OpenAIResponsesClient
+from app.core.config import BASE_QUEUE_NAMES
 from app.core.dependencies import get_session_factory, get_settings
 from app.schemas.common import JobType
 from worker.domain_adapters import (
@@ -18,6 +20,7 @@ from worker.domain_adapters import (
     DocumentAnalysisAdapter,
     EmotionAdapter,
     FeedbackAdapter,
+    GoalProgressAdapter,
     SessionResultAdapter,
     TTSAdapter,
 )
@@ -27,12 +30,18 @@ from worker.queue import QueueWorker
 from worker.sql_queue import SqlDomainAdapter, SqlEvidenceRetriever, SqlQueueRepository
 from worker.tts_streaming import TTSChunkWriter
 
-BASE_QUEUE_NAMES = ("conversation_text", "interactive_ai", "document_analysis")
+logger = logging.getLogger(__name__)
 
 
 def run_queue(queue_name: str) -> None:
     if queue_name not in BASE_QUEUE_NAMES:
         raise ValueError(f"unknown base queue: {queue_name}")
+    # 설정이 없으면 logging 은 WARNING 이상만 내보낸다. worker 가 남기는 진행
+    # 로그가 통째로 사라져 무슨 일이 있었는지 알 수 없으므로 여기서 붙인다.
+    logging.basicConfig(
+        level=os.getenv("WORKER_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     settings = get_settings()
     with ThreadPoolExecutor(
         max_workers=settings.worker_concurrency + 1,
@@ -45,7 +54,18 @@ def run_queue(queue_name: str) -> None:
         futures.append(executor.submit(_run_deadline_reaper, queue_name))
         done, _pending = wait(futures, return_when=FIRST_EXCEPTION)
         for future in done:
-            future.result()
+            error = future.exception()
+            if error is None:
+                continue
+            # 여기서 예외를 그대로 올리면 ThreadPoolExecutor 의 __exit__ 가
+            # 영원히 도는 나머지 스레드를 기다리느라 끝나지 않는다. 프로세스는
+            # 살아 있는데 아무 일도 하지 않고 traceback 도 남지 않아서, 겉으로는
+            # 정상처럼 보이는 좀비가 된다. 즉시 소리 내며 죽는다.
+            logger.critical(
+                "worker thread died queue=%s — 프로세스를 종료한다", queue_name, exc_info=error
+            )
+            logging.shutdown()
+            os._exit(1)
 
 
 def _run_consumer(queue_name: str, consumer_index: int) -> None:
@@ -66,6 +86,7 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
             JobType.INTERVIEW_DOCUMENT_ANALYSIS: DocumentAnalysisAdapter(),
             JobType.INTERVIEW_CONFIGURATION_GENERATION: ConfigurationAdapter(),
             JobType.SESSION_RESULT_GENERATION: SessionResultAdapter(),
+            JobType.SCENARIO_GOAL_PROGRESS: GoalProgressAdapter(),
         }
         adapters = {
             job_type: adapter
@@ -121,13 +142,20 @@ def _run_consumer(queue_name: str, consumer_index: int) -> None:
         worker = QueueWorker(repository, executors, maximum_attempts=3)
         heartbeat = HeartbeatRepository(session)
         while True:
-            heartbeat.record(worker_id, queue_name, started_at)
+            # 하트비트는 job 처리와 무관한 부가 기록이다. 여기서 실패해 루프를
+            # 벗어나면 job 을 하나도 처리하지 못하는 상태로 남는다. readiness 가
+            # 하트비트 부재로 알려줄 테니 로그만 남기고 계속 돈다.
+            try:
+                heartbeat.record(worker_id, queue_name, started_at)
+            except Exception:
+                session.rollback()
+                logger.exception("heartbeat failed queue=%s", queue_name)
             try:
                 if not worker.run_once():
                     time.sleep(0.25)
             except Exception:
                 session.rollback()
-                traceback.print_exc()
+                logger.exception("job processing failed queue=%s", queue_name)
                 time.sleep(0.25)
 
 
@@ -146,6 +174,7 @@ def _run_deadline_reaper(queue_name: str) -> None:
         JobType.INTERVIEW_DOCUMENT_ANALYSIS: DocumentAnalysisAdapter(),
         JobType.INTERVIEW_CONFIGURATION_GENERATION: ConfigurationAdapter(),
         JobType.SESSION_RESULT_GENERATION: SessionResultAdapter(),
+        JobType.SCENARIO_GOAL_PROGRESS: GoalProgressAdapter(),
     }
     adapters = {
         job_type: adapter
@@ -164,7 +193,7 @@ def _run_deadline_reaper(queue_name: str) -> None:
                 repository.recover_expired()
             except Exception:
                 session.rollback()
-                traceback.print_exc()
+                logger.exception("deadline recovery failed queue=%s", queue_name)
             time.sleep(0.25)
 
 
