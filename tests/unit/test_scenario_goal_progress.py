@@ -156,10 +156,11 @@ def test_achievement_without_evidence_is_downgraded() -> None:
     assert condition.achieved is False
 
 
-def test_goal_progress_is_enqueued_only_for_scenarios_from_the_second_turn() -> None:
+def test_goal_progress_is_enqueued_for_scenarios_from_the_first_turn() -> None:
+    """필수 조건이 하나라 첫 턴에 달성될 수 있다. 2턴부터 재면 놓친다."""
     source = inspect.getsource(ConversationAdapter._enqueue_goal_progress)
 
-    assert "if turn_count < 2:" in source
+    assert "if turn_count < 1:" in source
     assert "r.practice_type = 'scenario'" in source
     assert "r.goal_prompt_dismissed_at is null" in source
     assert "job_type=JobType.SCENARIO_GOAL_PROGRESS" in source

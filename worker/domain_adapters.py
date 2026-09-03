@@ -456,12 +456,13 @@ class ConversationAdapter:
         assistant_message_id: UUID,
         turn_count: int,
     ) -> None:
-        """시나리오에서만, 2턴째부터, 아직 선택하지 않은 방에만 판정을 건다.
+        """시나리오에서만, 아직 선택하지 않은 방에만 판정을 건다.
 
-        1턴은 인사만 하고 끝나는 경우가 많아 판정할 것이 없다. 사용자가
-        "계속하기"를 눌렀거나 이미 달성 표시가 붙은 방은 다시 묻지 않는다.
+        필수 조건은 "상대에게서 무언가를 받아냈는가" 하나라 첫 턴에 달성될 수
+        있다. 길을 묻는 시나리오는 질문 한 번으로 끝난다. 사용자가 "계속하기"를
+        눌렀거나 이미 달성 표시가 붙은 방은 다시 묻지 않는다.
         """
-        if turn_count < 2:
+        if turn_count < 1:
             return
         eligible = session.execute(
             text(
