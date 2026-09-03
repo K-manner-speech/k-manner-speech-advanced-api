@@ -116,6 +116,25 @@ class ResultItemOutput(ContractModel):
     source_document_id: UUID | None
 
 
+class EvidenceRelevanceDecision(ContractModel):
+    chunk_id: UUID
+    support_level: Literal["supported", "partially_supported", "unsupported"]
+    supported_claims: list[str] = Field(max_length=5)
+    unsupported_claims: list[str] = Field(max_length=5)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class EvidenceRelevanceResult(ContractModel):
+    decisions: list[EvidenceRelevanceDecision]
+
+    @model_validator(mode="after")
+    def require_unique_chunk_ids(self) -> EvidenceRelevanceResult:
+        chunk_ids = [item.chunk_id for item in self.decisions]
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("duplicate evidence relevance chunk_id")
+        return self
+
+
 InterviewEvaluationCategory = Literal[
     "question_understanding_fit",
     "answer_structure",

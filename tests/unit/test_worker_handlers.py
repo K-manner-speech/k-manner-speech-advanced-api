@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+
 from app.adapters.interview_provider import (
     GeneratedQuestion,
     InterviewQuestionResult,
@@ -10,14 +12,58 @@ from app.adapters.interview_provider import (
 )
 from app.ai.interfaces import AIProviderError
 from app.ai.rag import EvidenceChunk
-from app.ai.schemas import ConversationReply
+from app.ai.schemas import (
+    ConversationReply,
+    EvidenceRelevanceDecision,
+    EvidenceRelevanceResult,
+)
 from app.schemas.common import JobType
 from worker.executors import (
     WorkerExecutors,
+    filter_relevant_evidence,
+    relevance_score_gap,
     split_conversation_messages,
     validate_question_evidence,
 )
 from worker.queue import ClaimedJob
+
+
+def test_relevance_filter_preserves_order_and_rejects_missing_decisions() -> None:
+    owner_id = uuid4()
+    document_id = uuid4()
+    first = EvidenceChunk(
+        uuid4(), owner_id, document_id, 1, "관련 근거", "resume", 0.8
+    )
+    second = EvidenceChunk(
+        uuid4(), owner_id, document_id, 1, "무관 근거", "resume", 0.7
+    )
+    result = EvidenceRelevanceResult(
+        decisions=[
+            EvidenceRelevanceDecision(
+                chunk_id=first.id,
+                support_level="supported",
+                supported_claims=["직접 경험"],
+                unsupported_claims=[],
+                reason="직접 근거",
+            ),
+            EvidenceRelevanceDecision(
+                chunk_id=second.id,
+                support_level="unsupported",
+                supported_claims=[],
+                unsupported_claims=["요구 경험"],
+                reason="분야만 유사",
+            ),
+        ]
+    )
+
+    assert filter_relevant_evidence([first, second], result) == [first]
+    assert relevance_score_gap([first, second]) == pytest.approx(0.1)
+
+    with pytest.raises(AIProviderError, match="AI_PROVIDER_SCHEMA_INVALID"):
+        filter_relevant_evidence(
+            [first, second],
+            EvidenceRelevanceResult(decisions=[result.decisions[0]]),
+        )
 
 
 def test_interview_question_source_refs_must_match_retrieved_evidence() -> None:
