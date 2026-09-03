@@ -175,7 +175,10 @@ def test_goal_progress_job_is_wired_into_the_evaluation_queue() -> None:
         "evaluation_status",
         True,
     )
-    assert get_job_execution_policy(JobType.SCENARIO_GOAL_PROGRESS).deadline_seconds == 20
+    # deadline 은 job 생성 시점부터 흐른다. 판정에 쓰는 OpenAI 클라이언트의
+    # timeout 이 30초이므로, queue 대기까지 덮으려면 그보다 넉넉해야 한다.
+    # 짧게 잡으면 성공한 응답이 이미 만료된 job 에 도착한다.
+    assert get_job_execution_policy(JobType.SCENARIO_GOAL_PROGRESS).deadline_seconds >= 60
 
 
 def test_scoring_jobs_moved_off_the_realtime_queue() -> None:

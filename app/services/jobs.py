@@ -46,8 +46,10 @@ _DEADLINES_SECONDS: dict[JobType, int] = {
     # 60초 제한과 같은 deadline을 쓰면 정상 응답 직전에 reaper가 작업을
     # 실패시킬 수 있다. provider timeout 이후 재시도할 여유까지 확보한다.
     JobType.SESSION_RESULT_GENERATION: 180,
-    # 조건 목록과 대화만 보고 달성 여부를 판정한다. 답장 생성보다 훨씬 가볍다.
-    JobType.SCENARIO_GOAL_PROGRESS: 20,
+    # 판정 자체는 10초 안팎이지만 deadline 은 job 생성 시점부터 흐른다. queue
+    # 대기와 provider timeout(30초)을 모두 덮지 못하면 성공한 응답도 이미
+    # 죽은 job 에 도착한다.
+    JobType.SCENARIO_GOAL_PROGRESS: 60,
 }
 
 _ALLOWED_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
