@@ -1,7 +1,7 @@
 # K-Manner Speech API 명세서
 
-> 상태: 구현 전 확정 계약  
-> 기준: `docs/PRD.md`, `docs/화면기획서.md`, `docs/ERD.md`, `docs/아키텍처.md` 및 2026-08-25까지 확정된 아키텍처 결정  
+> 상태: v1.1.0 개발 계약  
+> 기준: API·Front v1.0.0 구현 기준선과 `docs/PRD.md`, `docs/화면기획서.md`, `docs/아키텍처.md`, `docs/ERD.md`의 v1.1.0 요구사항  
 > 범위: HTTP 계약과 계층 책임. 기능 코드, SQL, RLS 구현, Provider prompt 및 DB migration은 포함하지 않는다.
 
 ## 1. 계약 원칙
@@ -165,18 +165,23 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `room.list` | `GET /api/v1/rooms` | Bearer | - | cursor,limit,status,practice_type | `200 Page[RoomSummary]` | 401,422 | owner 집합 안 cursor |
 | `room.get` | `GET /api/v1/rooms/{room_id}` | Bearer | - | path | `200 RoomDetail` | 401,404 | room owner |
 | `room.delete` | `DELETE /api/v1/rooms/{room_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | queue cancel/stale guard 후 종속 message/context/audio/feedback 삭제; 독립 result 유지 |
+| `room.end` | `POST /api/v1/rooms/{room_id}/end` | Bearer | 필수 | 빈 object | `202 RoomEndAccepted` | 401,404,409,503 | owner의 `in_progress` 자유채팅·시나리오만 `completed + user_ended`로 전환하고 종료 snapshot·단일 result·Job을 한 transaction으로 생성 |
+| `interview_room.complete` | `POST /api/v1/rooms/{room_id}/interview-complete` | Bearer | 필수 | 빈 object | `202 RoomEndAccepted` | 401,404,409,503 | 면접관 종료 발화로 `in_progress + awaiting_user_end`가 된 owner 면접방만 `completed + interview_completed`로 확정하고 종료 snapshot·단일 result·Job 생성 |
 | `room_message.list` | `GET /api/v1/rooms/{room_id}/messages` | Bearer | - | cursor,limit | `200 Page[Message]` | 401,404,422 | room owner; sequence 안정 정렬 |
 | `room_message.create` | `POST /api/v1/rooms/{room_id}/messages` | Bearer | 필수 | `MessageCreateRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | active/turn/현재 interview question 판정; user message+conversation job 원자 확정 |
+| `room_voice_message.create` | `POST /api/v1/rooms/{room_id}/voice-messages` | Bearer | 필수 | multipart 음성+면접 질문 ref | `202 MessageAccepted` | 401,404,409,413,415,422,429,503 | text와 동일하게 active room만 허용; 음성 저장·전사 대상 message·Job 원자 확정 |
 | `message_response.retry` | `POST /api/v1/messages/{message_id}/retry-response` | Bearer | 필수 | 빈 object | `202 MessageAccepted` | 401,404,409,429,503 | 기존 실패 response processing target에 새 Job; 새 user message 금지 |
 
 면접 답변은 별도 endpoint가 아니라 `room_message.create`를 사용하고 `current_interview_question_id`를 보낸다. Service가 `interview_answers`를 동일 transaction에서 연결한다.
+
+진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`, 면접방에 `room.end`를 요청하면 `409 ROOM_END_NOT_ALLOWED_FOR_INTERVIEW`다.
 
 ### 4.5 Feedback·emotion·audio·repeat
 
 | operationId | Method/path | Auth | Idem | Request | Success | Errors | Owner/Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `message_feedback.get` | `GET /api/v1/messages/{message_id}/feedback` | Bearer | - | path | `200 FeedbackResponse` | 401,404 | message→room owner; partial 허용 |
-| `message_feedback.retry` | `POST /api/v1/messages/{message_id}/feedback/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 feedback row, 새 Job |
+| `message_feedback.retry` | `POST /api/v1/messages/{message_id}/feedback/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 진행 중 방의 같은 feedback row, 새 Job |
 | `message_emotion.retry` | `POST /api/v1/messages/{message_id}/emotion/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | message→room owner와 retryable `failed` 상태를 검증하고 같은 emotion analysis row에 새 Job을 연결한다. |
 | `message_tts.retry` | `POST /api/v1/messages/{message_id}/tts/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 audio logical target, 성공 연결 후 구 object 삭제 |
 | `message_audio.get` | `GET /api/v1/messages/{message_id}/audio` | Bearer | - | path | `200 AudioAccessResponse` | 401,404,409 | current metadata·object prefix 재검증 후 short signed URL; URL 저장/log 금지 |
@@ -184,18 +189,20 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 
 감정 결과는 `Message.emotion` 또는 `FeedbackResponse.emotions`로 조회하며 결과값을 직접 수정하는 API는 없다. 감정 분석 재시도는 `message_emotion.retry`만 사용한다. Service는 기존 `message_emotion_analysis` 행을 `processing`으로 전이하고 새 Job과 새 `processing_token`을 연결한다. 이전 처리 토큰의 늦은 결과는 현재 토큰과 일치하지 않으면 저장하지 않는다. `processing|succeeded` 상태, retry 불가능한 오류 또는 기존 유효 Job이 있으면 `409`다.
 
+`completed` 방에서도 기존 `message_feedback.get`과 `message_audio.get`은 허용하여 문장별 피드백 조회와 TTS 재생을 제공한다. 반면 response·feedback·emotion·TTS 재처리와 repeat 생성은 모두 `409 ROOM_READ_ONLY`다. 다시 말하기는 먼저 같은 조합의 새 방을 만든 뒤 그 방에서 수행한다.
+
 ### 4.6 Jobs·results
 
 | operationId | Method/path | Auth | Idem | Request | Success | Errors | Owner/Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `job.get` | `GET /api/v1/jobs/{job_id}` | Bearer | - | path | `200 Job` | 401,404 | direct job owner + target/result owner 재검증 |
 | `room_result.get` | `GET /api/v1/rooms/{room_id}/result` | Bearer | - | path | `200 SessionResult` | 401,404,409 | room owner; result 없거나 processing 상태 구분 |
-| `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 failed result row에 새 Job을 만들고 60초 deadline·최대 3회 시도 정책을 적용한다. |
+| `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 60초 deadline·최대 3회 시도 정책을 적용한다. |
 | `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub` |
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
-Room이 `completed|failed`로 종료될 때 Service가 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. Client create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+Room이 `completed`로 종료될 때 Service가 종료 사유·완료 턴 수·진행 시간·평가 cutoff를 복제한 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 사용자 종료는 `room.end`, 면접은 `interview_room.complete` 호출에서 이를 수행한다. 평가 가능한 사용자 발화가 없으면 결과 생성은 성공 상태로 마치되 `insufficient_data=true`, `overall_score=null`로 반환한다. Client result create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
 
 ### 4.7 Interview setup·documents·analysis
 
@@ -261,12 +268,13 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | Schema | Fields/constraints |
 | --- | --- |
 | `RoomCreateRequest` | `practice_type:'free_chat'|'scenario'`, `persona_id`, scenario일 때 `scenario_id`; owner/status 금지 |
-| `Room` | `id`, practice/catalog refs, `status`, `turn_count`, `ended_reason|null`, timestamps |
+| `Room` | `id`, practice/catalog refs, `status:'in_progress'|'completed'`, `turn_count`, `ended_reason:null|'awaiting_user_end'|'goal_achieved'|'max_turns_reached'|'interview_completed'|'user_ended'`, `evaluation_cutoff_message_id|null`, `completed_turn_count|null`, timestamps. 기존 `completed` 사유는 과거 row 조회 호환값이며 신규 write 금지 |
 | `RoomDetail` | `Room` + safe relationship/situation/goal + interview configuration ref nullable |
 | `MessageCreateRequest` | `content:string`, `input_mode:'text'|'voice'`, 면접이면 `current_interview_question_id`; `client_request_id`는 Idempotency-Key와 같은 UUID 사용 |
 | `Message` | `id`, `room_id`, `sequence_no`, `sender_type`, `content`, `input_mode`, `delivery_status`, `reply_to_message_id|null`, safe emotion/status, timestamps |
 | `MessageAccepted` | `message:Message`, `job:JobRef` |
 | `RepeatRequest` | `recommended_expression:string` |
+| `RoomEndAccepted` | `room:Room`, `result:SessionResultSummary`, `job:JobRef` |
 
 ### 5.4 Feedback·audio·result
 
@@ -276,11 +284,11 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `FeedbackEmotion` | label, percentage, sort order 1..3, source text/voice, safe evidence/impression |
 | `FeedbackResponse` | `status:'processing'|'ready'|'partial'|'failed'`, overall 0..100|null, summary|null, scores, emotions, retryable error|null |
 | `AudioAccessResponse` | `status:'processing'|'ready'|'failed'`, `signed_url|null`, `expires_at|null`, audio type; storage path 금지 |
-| `SessionResultSummary` | `id`, `attempt_no`, `status`, `missing_categories`, `created_at` |
+| `SessionResultSummary` | `id`, `attempt_no`, `status`, `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id|null`, `insufficient_data`, `missing_categories`, `created_at` |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
 | `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
 | `InterviewEvaluation` | `status:'succeeded'|'partial'|'failed'`, `overall_score:5..100|null`, summary, scores, `missing_categories` |
-| `SessionResult` | summary fields, items, safe source refs, 면접이면 `interview_evaluation`; hiring pass/fail 판정 금지 |
+| `SessionResult` | summary fields, items, safe source refs, 면접이면 `interview_evaluation`; `insufficient_data=true`이면 `status='succeeded'`, `overall_score=null`; hiring pass/fail 판정 금지 |
 | `DomainJobAccepted` | target `DomainRef`, `job:JobRef` |
 
 면접 평가 category는 `question_understanding_fit`, `answer_structure`,
@@ -311,13 +319,13 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | Aggregate | 허용 핵심 전이 | API/Worker 책임 |
 | --- | --- | --- |
 | Onboarding | incomplete → completed | complete endpoint만 server validation 후 전이 |
-| Room | created/in_progress → completed 또는 failed | Service가 turn/성공조건/면접질문 판정; 종료 시 result record+Job 자동 생성 |
+| Room | in_progress → completed; 면접 종료 준비는 `in_progress + awaiting_user_end` | 시나리오는 목표 달성·최대 턴 또는 사용자 종료, 자유채팅은 사용자 종료, 면접은 종료 선언 뒤 사용자 최종 확정 시 종료 snapshot+result record+Job 자동 생성 |
 | Job | queued→processing; processing→queued/succeeded/failed/cancelled | Worker가 domain 상태와 한 transaction에서 전이; terminal immutable |
 | AI/emotion/document | processing→succeeded/failed; retryable failed→processing | Job 성공/실패와 동기화하며 API retry는 기존 domain row+새 Job·처리 토큰을 사용 |
 | Audio | processing→ready/failed | ready 연결 확정 뒤 old object 삭제 |
 | Feedback | processing→ready/partial/failed | 가능한 부분 결과 보존 |
 | Configuration | processing→ready→in_progress→completed; failed/invalidated | generation/regeneration과 room 생성을 server가 판정 |
-| Result | processing→partial/succeeded/failed | retry는 같은 result row+새 Job |
+| Result | processing→partial/succeeded/failed | 완료 방에서도 failed·partial retry는 같은 result row+새 Job; 자료 없음은 succeeded+insufficient_data |
 | Idempotency | in_progress→completed/failed; retryable failed→CAS in_progress | reconcile-first; terminal safe snapshot 불변 |
 
 삭제·교체·회원탈퇴는 queued Job cancel, queue cleanup, Worker의 provider 호출 전/저장 전 owner/resource/version 재검증, stale result discard 순서로 처리한다. 범용 user cancel endpoint는 없다.
@@ -359,6 +367,7 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 | 대화·부분 실패 | FR-03~08 | C/T 흐름, 독립 처리 상태 | room/message/AI/emotion | 8, 12.2~3 |
 | TTS·피드백 | FR-06~07 | timeout/retry/current audio | message_audio/turn_feedback | 7~8, 12.3 |
 | 결과 snapshot | 결과·재도전 요구 | 결과/목록/삭제 화면 | session_results/result_items | 12.3 |
+| 사용자 종료·읽기 전용 | FR-15 | 종료 확인/종료 방 상세 | practice_rooms 종료 snapshot·active unique | 12.2~3 |
 | 문서·RAG | 면접 자료 분석 | upload/분석/면접 흐름 | documents/analyses/config/questions | 9, 12.4 |
 | Job·멱등성 | NFR timeout/보존 | processing UX | processing_jobs/idempotency_records | 8, 11 |
 | 접근 제어 | 개인정보·소유 범위 | 삭제 안내 | owner chain/RLS | 6.3 matrix |
