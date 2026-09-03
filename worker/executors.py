@@ -251,6 +251,9 @@ class WorkerExecutors:
             "instructions": build_conversation_instructions(
                 is_interview=is_interview,
                 is_closing_response=is_closing_response,
+                is_scenario=room_payload.get("practice_type") == "scenario"
+                if isinstance(room_payload, dict)
+                else False,
                 catalog_prompt=catalog_prompt,
                 suffix=suffix,
             ),

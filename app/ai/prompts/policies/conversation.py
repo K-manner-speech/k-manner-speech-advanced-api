@@ -16,6 +16,14 @@ GENERAL_CONVERSATION_INSTRUCTIONS = (
     " interview_answer_complete와 interview_should_end는 null로 반환하세요."
 )
 
+SCENARIO_CONVERSATION_INSTRUCTIONS = (
+    " scenario_goal 은 사용자가 연습할 목표입니다. 페르소나가 대신 해주면 연습할 것이 "
+    "사라집니다. 사용자가 아직 묻지 않은 것을 먼저 알려주거나, 사용자가 꺼내야 할 용건을 "
+    "대신 꺼내지 마세요. 사용자가 목표와 관련해 말을 걸어올 여지를 남기고, 물어오면 그때 "
+    "답하세요. 다만 사용자가 이미 물었거나 요청했다면 미루지 말고 자연스럽게 응답하세요. "
+    "목표를 지시하거나 무엇을 말해야 하는지 알려주지도 마세요."
+)
+
 INTERVIEW_CONFIRMATION_REPLY = (
     "네, 말씀해 주신 내용 확인했습니다. "
     "이 질문에 대해 더 보충하실 내용이 있으신가요?"
@@ -64,6 +72,7 @@ def build_conversation_instructions(
     *,
     is_interview: bool,
     is_closing_response: bool,
+    is_scenario: bool = False,
     catalog_prompt: str = "",
     suffix: str = "",
 ) -> str:
@@ -72,6 +81,8 @@ def build_conversation_instructions(
         mode_instructions = INTERVIEW_CLOSING_INSTRUCTIONS
     elif is_interview:
         mode_instructions = INTERVIEW_RESPONSE_INSTRUCTIONS
+    elif is_scenario:
+        mode_instructions = GENERAL_CONVERSATION_INSTRUCTIONS + SCENARIO_CONVERSATION_INSTRUCTIONS
     else:
         mode_instructions = GENERAL_CONVERSATION_INSTRUCTIONS
     catalog_section = (
