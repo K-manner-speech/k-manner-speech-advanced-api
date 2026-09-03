@@ -113,8 +113,8 @@ def test_unmet_required_condition_leaves_the_room_untouched() -> None:
     assert not session.sql_containing("ended_reason = 'goal_achieved'")
 
 
-def test_unachieved_conditions_never_write_progress_rows() -> None:
-    """늦게 끝난 판정이 이미 달성된 조건을 되돌리면 안 된다."""
+def test_unachieved_conditions_are_recorded_with_their_reason() -> None:
+    """미달 이유를 남기지 않으면 카드가 왜 안 떴는지 확인할 방법이 없다."""
     session = Recorder(scalars=[1], rows=[{"room_id": uuid4(), "scenario_id": uuid4()}])
     output = ScenarioGoalProgress(
         conditions=[
@@ -129,13 +129,19 @@ def test_unachieved_conditions_never_write_progress_rows() -> None:
 
     GoalProgressAdapter().complete(session, _claimed(uuid4(), uuid4()), output)
 
-    assert not session.sql_containing("insert into public.room_success_condition_progress")
+    written = session.sql_containing("insert into public.room_success_condition_progress")
+    assert len(written) == 1
+    parameters = written[0][1]
+    assert parameters["achieved"] is False
+    assert parameters["reasoning"] == "감사 표현이 없습니다."
 
 
-def test_progress_upsert_only_moves_false_to_true() -> None:
+def test_progress_upsert_never_undoes_an_achieved_condition() -> None:
+    """달성은 이미 일어난 사실이라 늦게 도착한 미달 판정이 덮으면 안 된다."""
     source = inspect.getsource(GoalProgressAdapter.complete)
 
     assert "on conflict (room_id, condition_id) do update" in source
+    # 이 가드가 빠지면 늦게 끝난 옛 턴의 판정이 달성 기록을 지운다.
     assert "where not public.room_success_condition_progress.achieved" in source
 
 

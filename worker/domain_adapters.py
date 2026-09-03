@@ -1030,17 +1030,19 @@ class GoalProgressAdapter:
             return False
         room_id = locked["room_id"]
         for condition in output.conditions:
-            if not condition.achieved:
-                # 달성은 단조롭다. 워커가 동시에 돌아 늦은 턴의 판정이 먼저
-                # 끝날 수 있으므로 false 로 되돌리는 갱신은 하지 않는다.
-                continue
+            # 미달도 이유와 함께 남긴다. 남기지 않으면 카드가 뜨지 않았을 때
+            # 어느 조건이 왜 막았는지 확인할 방법이 없다.
+            #
+            # 달성은 이미 일어난 사실이라 뒤집히지 않지만 미달은 "아직" 일 뿐이다.
+            # 워커가 동시에 돌아 늦은 턴의 판정이 먼저 끝날 수 있으므로, 이미
+            # 달성으로 기록된 조건은 갱신 대상에서 제외해 되돌아가지 않게 한다.
             session.execute(
                 text(
                     """
                     insert into public.room_success_condition_progress
                         (room_id, condition_id, achieved, evidence_message_id,
                          reasoning, evaluated_at)
-                    select :room_id, c.id, true, m.id, :reasoning, now()
+                    select :room_id, c.id, :achieved, m.id, :reasoning, now()
                     from public.scenario_success_conditions c
                     left join public.room_messages m
                       on m.room_id = :room_id
@@ -1048,15 +1050,9 @@ class GoalProgressAdapter:
                     where c.scenario_id = :scenario_id
                       and c.condition_key = :condition_key
                     on conflict (room_id, condition_id) do update
-                    set achieved = true,
-                        evidence_message_id = coalesce(
-                            public.room_success_condition_progress.evidence_message_id,
-                            excluded.evidence_message_id
-                        ),
-                        reasoning = coalesce(
-                            public.room_success_condition_progress.reasoning,
-                            excluded.reasoning
-                        ),
+                    set achieved = excluded.achieved,
+                        evidence_message_id = excluded.evidence_message_id,
+                        reasoning = excluded.reasoning,
                         evaluated_at = now()
                     where not public.room_success_condition_progress.achieved
                     """
@@ -1065,6 +1061,7 @@ class GoalProgressAdapter:
                     "room_id": room_id,
                     "scenario_id": locked["scenario_id"],
                     "condition_key": condition.condition_key,
+                    "achieved": condition.achieved,
                     "reasoning": condition.reasoning,
                     "evidence_sequence_no": condition.evidence_sequence_no,
                 },
