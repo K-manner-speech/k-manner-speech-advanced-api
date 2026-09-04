@@ -593,17 +593,22 @@ class ConversationRepository:
         )
         return dict(row)
 
-    def complete_scenario(
+    def complete_practice(
         self, authenticated_user_id: UUID, room_id: UUID, deadline_seconds: int
     ) -> dict[str, Any] | None:
+        """진행 중인 방을 사용자가 직접 끝낸다.
+
+        면접의 interview-complete 는 awaiting_user_end 상태만 받는다. 목표를
+        이루지 못했거나 질문이 남았어도 그만둘 수 있어야 하므로, 여기서는
+        연습 종류와 무관하게 진행 중이기만 하면 받는다.
+        """
         target = (
             self._session.execute(
                 text(
                     """
-                    select id
+                    select id, turn_count, practice_type, interview_configuration_id
                     from public.practice_rooms
                     where id = :room_id and user_id = :authenticated_user_id
-                      and practice_type in ('scenario', 'free_chat')
                       and status = 'in_progress'
                     for update
                     """
@@ -632,16 +637,43 @@ class ConversationRepository:
             .mappings()
             .one()
         )
+        configuration_id = target["interview_configuration_id"]
+        if configuration_id is not None:
+            self._session.execute(
+                text(
+                    """
+                    update public.interview_configurations
+                    set status = 'completed', completed_at = now(), updated_at = now()
+                    where id = :configuration_id and user_id = :authenticated_user_id
+                    """
+                ),
+                {
+                    "configuration_id": configuration_id,
+                    "authenticated_user_id": authenticated_user_id,
+                },
+            )
+        # 한 마디도 주고받지 않은 방은 평가할 대화가 없다. 종합 피드백을 만들면
+        # 근거 없는 결과가 나오고 AI 호출만 낭비된다.
+        if int(target["turn_count"]) < 1:
+            return dict(row)
         result_id = self._session.execute(
             text(
                 """
                 insert into public.session_results
-                    (room_id, user_id, result_status)
-                values (:room_id, :authenticated_user_id, 'processing')
+                    (room_id, user_id, result_status, interview_setup_snapshot)
+                values (:room_id, :authenticated_user_id, 'processing',
+                        case when cast(:configuration_id as text) is null then null
+                             else jsonb_build_object(
+                               'configuration_id', cast(:configuration_id as text))
+                        end)
                 returning id
                 """
             ),
-            {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            {
+                "room_id": room_id,
+                "authenticated_user_id": authenticated_user_id,
+                "configuration_id": configuration_id,
+            },
         ).scalar_one()
         job = self.insert_job(
             authenticated_user_id,
