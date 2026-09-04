@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -1190,9 +1191,11 @@ class TTSAdapter:
         if not isinstance(output, TTSOutput):
             raise TypeError("TTS output type mismatch")
         try:
+            upload_started = time.perf_counter()
             self._storage.upload(
                 "message-audio", output.storage_path, output.wav, "audio/wav"
             )
+            output.metrics.storage_upload_ms = (time.perf_counter() - upload_started) * 1000
         except RuntimeError as error:
             raise AIProviderError("STORAGE_UNAVAILABLE", retryable=True) from error
         updated = session.execute(

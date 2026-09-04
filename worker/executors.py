@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -38,6 +40,7 @@ from app.ai.schemas import (
 )
 from app.schemas.common import JobType
 from worker.queue import ClaimedJob
+from worker.tts_metrics import TTSMetrics
 
 PCM_SAMPLE_RATE = 24_000
 PCM_SAMPLE_WIDTH_BYTES = 2
@@ -90,6 +93,7 @@ class ConfigurationOutput:
 class TTSOutput:
     wav: bytes
     storage_path: str
+    metrics: TTSMetrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +386,14 @@ class WorkerExecutors:
         )
 
     def _tts(self, item: ClaimedJob, _suffix: str) -> TTSOutput:
+        started = time.perf_counter()
+        queue_wait_ms = 0.0
+        if item.enqueued_at is not None:
+            queue_wait_ms = max(
+                0.0,
+                (datetime.now(item.enqueued_at.tzinfo) - item.enqueued_at).total_seconds() * 1000,
+            )
+        input_text = str(item.payload["text"])
         raw_bundle = item.payload.get("prompt_bundle")
         bundle = raw_bundle if isinstance(raw_bundle, str) else None
         voice = self._prompt_composer.voice_for(bundle)
@@ -391,29 +403,64 @@ class WorkerExecutors:
         stream_method = getattr(self._gemini_tts, "synthesize_stream", None)
         if self._tts_chunk_writer is not None and callable(stream_method):
             chunks: list[bytes] = []
+            provider_first_chunk_ms: float | None = None
+            db_write_ms = 0.0
             stream = cast(Callable[[str, str, str], Iterator[bytes]], stream_method)(
-                str(item.payload["text"]),
+                input_text,
                 voice.key if voice else "Kore",
                 instruction,
             )
-            for sequence_no, chunk in enumerate(batch_pcm_chunks(stream)):
+
+            def measured_stream() -> Iterator[bytes]:
+                nonlocal provider_first_chunk_ms
+                for provider_chunk in stream:
+                    if provider_chunk and provider_first_chunk_ms is None:
+                        provider_first_chunk_ms = (time.perf_counter() - started) * 1000
+                    yield provider_chunk
+
+            for sequence_no, chunk in enumerate(batch_pcm_chunks(measured_stream())):
+                write_started = time.perf_counter()
                 self._tts_chunk_writer(item, sequence_no, chunk)
+                db_write_ms += (time.perf_counter() - write_started) * 1000
                 chunks.append(chunk)
             if not chunks:
                 raise AIProviderError("AI_PROVIDER_SCHEMA_INVALID", retryable=False)
+            provider_total_ms = (time.perf_counter() - started) * 1000
+            pcm = b"".join(chunks)
             wav = pcm_to_wav(
-                b"".join(chunks),
+                pcm,
                 sample_rate=PCM_SAMPLE_RATE,
                 channels=1,
                 sample_width=PCM_SAMPLE_WIDTH_BYTES,
             )
+            audio_duration_ms = int(
+                len(pcm) / (PCM_SAMPLE_RATE * PCM_SAMPLE_WIDTH_BYTES) * 1000
+            )
         else:
             wav = self._gemini_tts.synthesize(
-                str(item.payload["text"]), voice.key if voice else "Kore", instruction
+                input_text, voice.key if voice else "Kore", instruction
             )
+            provider_total_ms = (time.perf_counter() - started) * 1000
+            provider_first_chunk_ms = provider_total_ms
+            db_write_ms = 0.0
+            audio_duration_ms = max(0, int((len(wav) - 44) / 48_000 * 1000))
+            chunks = [wav]
         return TTSOutput(
             wav=wav,
             storage_path=str(item.payload["storage_path"]),
+            metrics=TTSMetrics(
+                job_id=item.job_id,
+                message_audio_id=item.target_id,
+                text_chars=len(input_text),
+                queue_wait_ms=queue_wait_ms,
+                provider_first_chunk_ms=provider_first_chunk_ms,
+                provider_total_ms=provider_total_ms,
+                db_write_ms=db_write_ms,
+                audio_duration_ms=audio_duration_ms,
+                chunk_count=len(chunks),
+                attempt_count=item.attempt_count,
+                result="success",
+            ),
         )
 
     def _feedback(self, item: ClaimedJob, suffix: str) -> GeneralFeedback:

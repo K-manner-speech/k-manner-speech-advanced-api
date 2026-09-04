@@ -299,7 +299,7 @@ class SqlQueueRepository:
                 text(
                     """
                     select id, user_id, job_type, status, transport_attempt_count,
-                           schema_repair_count, deadline_at, next_attempt_at,
+                           schema_repair_count, deadline_at, next_attempt_at, created_at,
                            message_ai_processing_id, message_emotion_analysis_id,
                            message_audio_id, turn_feedback_id,
                            interview_document_analysis_id, interview_configuration_id,
@@ -361,6 +361,7 @@ class SqlQueueRepository:
             schema_repair_count=int(job["schema_repair_count"]),
             deadline_at=deadline_at,
             payload=claim.payload,
+            enqueued_at=job["created_at"],
         )
 
     def complete(self, message: QueueMessage, item: ClaimedJob, output: object) -> bool:
