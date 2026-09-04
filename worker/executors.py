@@ -26,7 +26,12 @@ from app.ai.prompts.policies.conversation import (
     build_conversation_instructions,
 )
 from app.ai.providers.gemini import pcm_to_wav
-from app.ai.rag import EvidenceChunk, chunk_document
+from app.ai.rag import (
+    EVIDENCE_SECTIONS,
+    EvidenceChunk,
+    assign_sections,
+    chunk_document,
+)
 from app.ai.schemas import (
     ConversationReply,
     ConversationSummary,
@@ -134,6 +139,7 @@ class EvidenceRetriever(Protocol):
         query_embedding: list[float],
         threshold: float,
         top_k: int,
+        sections: tuple[str, ...] | None = None,
     ) -> list[EvidenceChunk]: ...
 
 
@@ -486,30 +492,58 @@ class WorkerExecutors:
             schema_name="interview_document_analysis",
             result_type=InterviewAnalysisResult,
         )
+        document_type = str(item.payload.get("document_type", "document"))
         chunks = chunk_document(
             str(item.payload["extracted_text"]),
             maximum_tokens=250,
             overlap_tokens=50,
-            section=str(item.payload.get("document_type", "document")),
+            section=document_type,
         )
-        embeddings = self._embeddings.embed([chunk.text for chunk in chunks])
+        # 방금 뽑은 섹션 문장을 청크와 같은 호출로 임베딩해, 각 청크가 문서의 어느
+        # 부분인지 라벨을 붙인다. 질문 근거 검색을 경험·리스크로 좁히기 위해서다.
+        section_sentences = [
+            (name, sentence)
+            for name, sentences in (
+                ("summary", [analysis.sections.summary]),
+                ("skills", analysis.sections.skills),
+                ("experience", analysis.sections.experience),
+                ("risks", analysis.sections.risks),
+            )
+            for sentence in sentences
+            if sentence.strip()
+        ]
+        embeddings = self._embeddings.embed(
+            [chunk.text for chunk in chunks] + [text for _, text in section_sentences]
+        )
+        chunk_embeddings = embeddings[: len(chunks)]
+        sections = assign_sections(
+            chunk_embeddings,
+            [
+                (name, embedding)
+                for (name, _), embedding in zip(
+                    section_sentences, embeddings[len(chunks) :], strict=True
+                )
+            ],
+            fallback=document_type,
+        )
         return DocumentAnalysisOutput(
             analysis=analysis,
             chunks=[
-                (chunk.index, chunk.section, chunk.text, embedding)
-                for chunk, embedding in zip(chunks, embeddings, strict=True)
+                (chunk.index, section, chunk.text, embedding)
+                for chunk, section, embedding in zip(
+                    chunks, sections, chunk_embeddings, strict=True
+                )
             ],
         )
 
     def _configuration(self, item: ClaimedJob, suffix: str) -> ConfigurationOutput:
-        query = json.dumps(
-            {
-                "conditions": item.payload["conditions"],
-                "role": item.payload.get("desired_role"),
-            },
-            ensure_ascii=False,
-            default=str,
-        )
+        # 검색어는 이력서 본문과 같은 문체의 서술문이어야 가까워진다. JSON 은 절반이
+        # 키 이름과 기호이고, language·difficulty 는 질문을 만들 때의 조건이지
+        # 이력서에서 찾을 내용이 아니라 검색을 흐린다. 조건은 아래 프롬프트에만 넘긴다.
+        role = str(item.payload.get("desired_role") or "").strip()
+        query = (
+            f"{role} 지원자의 " if role else ""
+        ) + "실무 프로젝트 경험, 문제 해결 과정, 성능 개선과 기술 선택 근거"
         query_embedding = self._embeddings.embed([query])[0]
         versions = {
             UUID(str(document_id)): int(version)
@@ -521,7 +555,18 @@ class WorkerExecutors:
             query_embedding=query_embedding,
             threshold=self._rag_threshold,
             top_k=RAG_CANDIDATE_TOP_K,
+            sections=EVIDENCE_SECTIONS,
         )
+        if not evidence:
+            # 라벨이 붙기 전에 분석된 문서는 섹션 필터에 하나도 걸리지 않는다.
+            # 재분석을 요구하는 대신 문서 전체에서 다시 찾는다.
+            evidence = self._evidence_retriever.retrieve(
+                user_id=item.user_id,
+                document_versions=versions,
+                query_embedding=query_embedding,
+                threshold=self._rag_threshold,
+                top_k=RAG_CANDIDATE_TOP_K,
+            )
         if not evidence:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
         relevance = self._openai_interview.generate_structured(
