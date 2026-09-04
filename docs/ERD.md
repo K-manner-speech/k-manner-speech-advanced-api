@@ -97,7 +97,25 @@ erDiagram
         uuid evaluation_cutoff_message_id FK
         integer completed_turn_count
         timestamptz last_confirmed_turn_at
+        timestamptz goal_prompt_dismissed_at
         timestamptz completed_at
+        timestamptz updated_at
+    }
+
+    ROOM_GOAL_EVALUATIONS {
+        uuid id PK
+        uuid room_id FK
+        uuid message_id FK
+        integer turn_no
+        text evaluation_status
+        uuid processing_token
+        integer attempt_count
+        boolean achieved
+        text error_code
+        timestamptz deadline_at
+        timestamptz next_attempt_at
+        timestamptz evaluated_at
+        timestamptz created_at
         timestamptz updated_at
     }
 
@@ -176,6 +194,8 @@ erDiagram
     PRACTICE_ROOMS ||--o{ ROOM_SUCCESS_CONDITION_PROGRESS : tracks
     SCENARIO_SUCCESS_CONDITIONS ||--o{ ROOM_SUCCESS_CONDITION_PROGRESS : evaluated_as
     ROOM_MESSAGES o|--o{ ROOM_SUCCESS_CONDITION_PROGRESS : evidence
+    PRACTICE_ROOMS ||--o{ ROOM_GOAL_EVALUATIONS : judges
+    ROOM_MESSAGES ||--o{ ROOM_GOAL_EVALUATIONS : evaluated_at_turn
 ```
 
 ### 2.1 핵심 제약과 상태
@@ -190,9 +210,11 @@ erDiagram
   - 면접: `(user_id, interview_configuration_id)`당 활성 방 하나
 - `room_messages`는 `(room_id, sequence_no)`와 `(room_id, client_request_id)`가 unique다.
 - 진행 중인 동일 조합을 다시 선택하면 기존 방을 사용한다. 종료된 방은 활성 방 unique index 대상에서 제외되므로 같은 조합으로 새 방을 만들 수 있고, 기존 방은 목록에서 읽기 전용으로 조회한다.
-- 자유채팅과 시나리오의 사용자 종료는 `status = 'completed'`, `ended_reason = 'user_ended'`로 기록한다. 면접에는 임의의 사용자 중간 종료를 허용하지 않으며, `awaiting_user_end` 이후의 최종 완료 확정만 허용한다.
-- `ended_reason`의 신규 canonical 값은 `goal_achieved`, `max_turns_reached`, `interview_completed`, `user_ended`다. v1.0.0 데이터와 배포 중 호환을 위해 기존 `completed`, `awaiting_user_end`도 과도기 허용값으로 유지한다.
+- 사용자 종료는 연습 유형과 무관하게 `status = 'completed'`, `ended_reason = 'user_ended'`로 기록한다. 면접방도 질문이 남은 채로 끝낼 수 있으며, 이때 `interview_configurations`를 `completed`로 옮기고 결과에 `interview_setup_snapshot`을 남겨 `awaiting_user_end` 이후의 최종 확정과 같은 결과를 만든다.
+- `ended_reason`의 신규 canonical 값은 `goal_achieved`, `max_turns_reached`, `interview_completed`, `user_ended`다. `goal_achieved`는 `status = 'in_progress'`인 채로도 나타난다. 시나리오가 제한 턴 전에 필수 성공 조건을 채웠다는 제안 표시이며, 사용자가 종료를 고르면 `completed + user_ended`가 되고 계속을 고르면 `ended_reason`을 `NULL`로 되돌리고 `goal_prompt_dismissed_at`을 기록해 같은 제안을 반복하지 않는다. v1.0.0 데이터와 배포 중 호환을 위해 기존 `completed`, `awaiting_user_end`도 과도기 허용값으로 유지한다.
 - 완료 방은 `completed_at`과 `ended_reason`이 반드시 존재한다. `in_progress` 방에는 `completed_at`을 기록하지 않는다.
+- `room_goal_evaluations`는 시나리오 조기 목표 판정 Job의 target row다. 사용자 발화가 저장될 때마다 그 메시지와 턴 번호로 한 건을 만들고, Worker가 필수 성공 조건 충족 여부를 `achieved`에 기록한다.
+- `room_success_condition_progress`에는 충족한 조건뿐 아니라 충족하지 못한 조건도 `achieved = false` 와 판정 이유로 upsert한다. 한 번 `true`가 된 조건은 이후 판정으로 되돌리지 않는다.
 - `evaluation_cutoff_message_id`는 종료 시 종합 피드백에 포함할 마지막 메시지이며, `completed_turn_count`는 같은 시점의 완료 턴 수 snapshot이다. 종료 후 늦게 완료된 AI 처리 결과는 이 기준을 넘어 결과 평가에 포함하지 않는다.
 - 면접관의 종료 발화가 저장된 면접방은 최종 완료 확정 전까지 `in_progress`, `ended_reason = 'awaiting_user_end'`를 유지한다. 사용자가 최종 `면접 종료`를 확정하면 `completed`, `ended_reason = 'interview_completed'`로 전환한다.
 - AI 응답 처리와 페르소나 감정 분석은 메시지당 각각 하나의 독립 처리 레코드를 가진다.
@@ -211,6 +233,8 @@ erDiagram
 | `room_success_condition_progress.room_id → practice_rooms.id` | `CASCADE` |
 | `room_success_condition_progress.condition_id → scenario_success_conditions.id` | `RESTRICT` |
 | `room_success_condition_progress.evidence_message_id → room_messages.id` | `SET NULL` |
+| `room_goal_evaluations.room_id → practice_rooms.id` | `CASCADE` |
+| `room_goal_evaluations.message_id → room_messages.id` | `CASCADE` |
 | `practice_rooms.evaluation_cutoff_message_id → room_messages.id` | `SET NULL` |
 
 `profiles`, `user_consents`, `practice_rooms`, `room_messages` 등 기존 기본 테이블의 최초 FK 삭제 정책은 현재 저장소의 incremental migration만으로 확정하지 않는다.
@@ -612,6 +636,7 @@ erDiagram
         uuid interview_document_analysis_id FK
         uuid interview_configuration_id FK
         uuid session_result_id FK
+        uuid room_goal_evaluation_id FK
         integer transport_attempt_count
         smallint schema_repair_count
         timestamptz deadline_at
@@ -662,7 +687,7 @@ erDiagram
 ```
 
 `idempotency_records`의 unique key는 각 column 단독이 아니라 `(user_id, action_scope, idempotency_key)` 복합 unique다.
-자유채팅·시나리오 사용자 종료의 `action_scope`는 `room.end`이며, 동일 key 재요청은 최초 종료 결과와 결과 생성 Job snapshot을 재생한다.
+사용자 종료(`practice_room.complete`)는 현재 `Idempotency-Key`를 받지 않아 `idempotency_records`에 `action_scope`를 남기지 않는다. 종료는 `status = 'in_progress'` 조건부 update 로 직렬화한다.
 `account.delete`의 `in_progress` row는 partial unique index로 사용자당 하나만 허용한다. 성공한 Auth hard delete는 사용자 FK cascade로 이 row까지 즉시 삭제하므로 탈퇴 성공 snapshot은 보존하지 않는다.
 
 ### 5.1 Job 유형·상태·대상
@@ -676,14 +701,15 @@ erDiagram
 | `interview_document_analysis` | `interview_document_analysis_id` | `succeeded` |
 | `interview_configuration_generation` | `interview_configuration_id` | `ready` |
 | `session_result_generation` | `session_result_id` | `partial` 또는 `succeeded` |
+| `scenario_goal_progress` | `room_goal_evaluation_id` | `succeeded` |
 
 - Job 상태는 `queued`, `processing`, `succeeded`, `failed`, `cancelled`다. Job 실행 상태와 domain 결과 상태는 각자의 진실 원본이며 Worker가 한 transaction에서 전이표에 맞게 갱신한다.
-- 일곱 target FK 중 정확히 하나만 값이 있어야 하며 `job_type`과 일치해야 한다. 직접 `user_id`와 target owner chain의 최종 소유자는 insert/update trigger로 같음을 강제한다.
+- 여덟 target FK 중 정확히 하나만 값이 있어야 하며 `job_type`과 일치해야 한다. 직접 `user_id`와 target owner chain의 최종 소유자는 insert/update trigger로 같음을 강제한다.
 - 사용자/API 수준의 retry·regeneration은 새 Job row를 만든다. Provider transport retry와 structured-output repair는 같은 Job의 `transport_attempt_count`, `schema_repair_count`로 기록한다. 동일 target의 활성(`queued|processing`) Job은 최대 하나다.
 - `queued`와 terminal 상태에서는 `progress_stage`가 `NULL`이다. 처리 중에는 실제 확인 가능한 단계만 사용하며, 신뢰 가능한 총량이 있을 때만 `completed_units/total_units`를 기록한다. 시간 경과 기반 가짜 백분율은 만들지 않는다.
 - terminal Job은 불변이다. 실패에는 공개 가능한 `error_code`, `error_retryable`, allowlist `error_meta`만 저장한다. Provider 원문·프롬프트·응답·stack trace는 저장하지 않는다.
 - API의 `result_resource`는 성공 시 target 관계에서 `{type, id}`로 파생한다. 결과 본문과 URL은 Job row에 복제하지 않는다.
-- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`은 180초, `session_result_generation`은 60초 deadline을 사용하며 최대 3회 시도한다.
+- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`은 180초, `session_result_generation`과 `scenario_goal_progress`는 60초 deadline을 사용하며 최대 3회 시도한다. Job deadline은 provider client timeout보다 커야 한다.
 
 ### 5.2 진행 단계 허용 목록
 
@@ -696,6 +722,7 @@ erDiagram
 | `interview_document_analysis` | `extracting_text`, `chunking`, `embedding`, `saving_analysis` |
 | `interview_configuration_generation` | `retrieving_evidence`, `provider_processing`, `saving_configuration` |
 | `session_result_generation` | `aggregating_evidence`, `provider_processing`, `saving_result` |
+| `scenario_goal_progress` | `provider_processing`, `saving_progress` |
 
 ### 5.3 멱등성 상태와 복구
 
@@ -709,14 +736,14 @@ erDiagram
 
 ### 5.4 삭제·RLS 경계
 
-- 일곱 target FK는 `ON DELETE CASCADE`다. Service가 먼저 queue cleanup과 stale guard를 수행한 뒤 target을 삭제한다. 삭제된 Job polling은 `404`이며 별도 Job audit row는 보존하지 않는다.
+- 여덟 target FK는 `ON DELETE CASCADE`다. Service가 먼저 queue cleanup과 stale guard를 수행한 뒤 target을 삭제한다. 삭제된 Job polling은 `404`이며 별도 Job audit row는 보존하지 않는다.
 - `processing_jobs`는 `authenticated`의 owner `SELECT` RLS만 허용한다. insert/update/delete는 API/Worker 전용이다.
 - `idempotency_records`에는 Browser용 policy나 권한이 없다. fingerprint, claim, replay snapshot은 Repository/서버만 다룬다.
 - 두 테이블의 `user_id`는 `auth.users.id ON DELETE CASCADE`다. 다른 사용자 소유와 미존재 resource는 API에서 동일한 `404`로 처리한다.
 
 ### 5.5 Worker heartbeat
 
-`worker_heartbeats`는 `(worker_id, queue_name)` 복합 primary key와 `started_at`, `last_seen_at`을 가진 서버 내부 운영 테이블이다. `queue_name`은 `conversation_text`, `interactive_ai`, `document_analysis`만 허용한다. Worker는 같은 key를 upsert하며 API readiness는 필수 queue마다 `WORKER_HEARTBEAT_TTL_SECONDS` 이내의 row가 하나 이상 있는지 검사한다.
+`worker_heartbeats`는 `(worker_id, queue_name)` 복합 primary key와 `started_at`, `last_seen_at`을 가진 서버 내부 운영 테이블이다. `queue_name`은 `conversation_text`, `interactive_ai`, `evaluation_ai`, `document_analysis`만 허용한다. Worker는 같은 key를 upsert하며 API readiness는 필수 queue마다 `WORKER_HEARTBEAT_TTL_SECONDS` 이내의 row가 하나 이상 있는지 검사한다.
 
 이 테이블은 RLS를 활성화하되 Browser policy를 만들지 않으며 `anon`, `authenticated`의 모든 권한을 회수한다. heartbeat TTL은 측정값이므로 DB default나 코드 default를 두지 않는다.
 
@@ -787,7 +814,7 @@ flowchart LR
 
 - API DTO는 이 ERD의 persistence column을 그대로 노출하지 않는다. 특히 `user_id`, processing token, Storage path와 내부 error message는 서버 내부 값이다.
 - `claim_token`, `request_fingerprint`, `lease_expires_at`, 응답 snapshot과 Provider 원본 오류도 API DTO에 노출하지 않는다. Job API는 안전한 `type/status/progress/error/result_resource`만 노출한다.
-- 면접 준비 단위 생성, `POST /rooms`, `POST /rooms/{room_id}/end`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다. 사용자 종료의 `action_scope`는 `room.end`, 면접 준비 생성은 `interview_setup.create`다.
+- 면접 준비 단위 생성, `POST /rooms`, 메시지 전송, AI 응답·감정·피드백·TTS retry, 문서 업로드·교체·분석, 결과 retry와 삭제는 `Idempotency-Key`를 사용한다. 면접 준비 생성의 `action_scope`는 `interview_setup.create`다. 종료 계열 endpoint 는 현재 `Idempotency-Key`를 받지 않는다.
 - 비동기 처리 상태는 AI 응답, 감정, 음성, 피드백, 문서 분석, 면접 configuration별로 독립적으로 표현한다.
 - 목록 cursor는 반드시 인증 사용자 소유 집합 안에서 계산한다.
 - 문서 version, 분석, 면접 configuration과 결과 snapshot은 API 응답에서 각각의 식별자와 사용 version을 명확히 구분한다.
