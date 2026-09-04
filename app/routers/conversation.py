@@ -106,12 +106,12 @@ def complete_interview(
     operation_id="practice_room.complete",
     response_model=Room,
 )
-def complete_scenario(
+def complete_practice(
     room_id: UUID,
     user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
     service: Annotated[ConversationService, Depends(get_conversation_service)],
 ) -> Room:
-    return service.complete_scenario(user.id, room_id)
+    return service.complete_practice(user.id, room_id)
 
 
 @router.post(

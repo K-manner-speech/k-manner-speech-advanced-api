@@ -92,7 +92,7 @@ class StubConversationService(ConversationService):
             }
         )
 
-    def complete_scenario(self, user_id: Any, room_id: Any) -> Room:
+    def complete_practice(self, user_id: Any, room_id: Any) -> Room:
         return Room(
             **{
                 **room().model_dump(),
