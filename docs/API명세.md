@@ -118,7 +118,7 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | operationId | Method/path | Auth | Idem | Request | Success | Errors | Owner/Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `health.live` | `GET /api/v1/health/live` | 없음 | - | 없음 | `200 HealthLive` | 500 | process 생존만; 사용자 데이터 없음 |
-| `health.ready` | `GET /api/v1/health/ready` | 없음 | - | 없음 | `200 HealthReady` | 503 | DB, pgmq queues/extensions, 필수 timeout policy 7종, config, 필수 queue별 TTL 이내 worker heartbeat를 검증한다. Provider live call은 금지한다. |
+| `health.ready` | `GET /api/v1/health/ready` | 없음 | - | 없음 | `200 HealthReady` | 503 | DB, pgmq queues/extensions, 필수 timeout policy 8종, config, 필수 queue별 TTL 이내 worker heartbeat를 검증한다. Provider live call은 금지한다. |
 
 ### 4.2 Profile·onboarding·account
 
@@ -165,8 +165,9 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `room.list` | `GET /api/v1/rooms` | Bearer | - | cursor,limit,status,practice_type | `200 Page[RoomSummary]` | 401,422 | owner 집합 안 cursor |
 | `room.get` | `GET /api/v1/rooms/{room_id}` | Bearer | - | path | `200 RoomDetail` | 401,404 | room owner |
 | `room.delete` | `DELETE /api/v1/rooms/{room_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | queue cancel/stale guard 후 종속 message/context/audio/feedback 삭제; 독립 result 유지 |
-| `room.end` | `POST /api/v1/rooms/{room_id}/end` | Bearer | 필수 | 빈 object | `202 RoomEndAccepted` | 401,404,409,503 | owner의 `in_progress` 자유채팅·시나리오만 `completed + user_ended`로 전환하고 종료 snapshot·단일 result·Job을 한 transaction으로 생성 |
-| `interview_room.complete` | `POST /api/v1/rooms/{room_id}/interview-complete` | Bearer | 필수 | 빈 object | `202 RoomEndAccepted` | 401,404,409,503 | 면접관 종료 발화로 `in_progress + awaiting_user_end`가 된 owner 면접방만 `completed + interview_completed`로 확정하고 종료 snapshot·단일 result·Job 생성 |
+| `practice_room.complete` | `POST /api/v1/rooms/{room_id}/complete` | Bearer | 미사용 | 없음 | `200 Room` | 401,404,409,503 | owner의 `in_progress` 방을 연습 유형과 무관하게 `completed + user_ended`로 전환하고 종료 snapshot·단일 result·Job을 한 transaction으로 생성. 면접방은 `interview_configurations`도 `completed`로 옮기고 result에 `interview_setup_snapshot`을 남긴다. 턴이 0인 방은 평가할 대화가 없으므로 result와 Job을 만들지 않는다 |
+| `practice_room.continue` | `POST /api/v1/rooms/{room_id}/continue` | Bearer | 미사용 | 없음 | `200 Room` | 401,404,409 | 조기 목표 달성 제안을 사용자가 물리고 남은 턴까지 대화를 이어간다. `ended_reason`을 `null`로 되돌리고 `goal_prompt_dismissed_at`을 기록해 같은 제안을 반복하지 않는다 |
+| `interview_room.complete` | `POST /api/v1/rooms/{room_id}/interview-complete` | Bearer | 미사용 | 없음 | `200 Room` | 401,404,409,503 | 면접관 종료 발화로 `in_progress + awaiting_user_end`가 된 owner 면접방만 `completed + interview_completed`로 확정하고 종료 snapshot·단일 result·Job 생성 |
 | `room_message.list` | `GET /api/v1/rooms/{room_id}/messages` | Bearer | - | cursor,limit | `200 Page[Message]` | 401,404,422 | room owner; sequence 안정 정렬 |
 | `room_message.create` | `POST /api/v1/rooms/{room_id}/messages` | Bearer | 필수 | `MessageCreateRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | active/turn/현재 interview question 판정; user message+conversation job 원자 확정 |
 | `room_voice_message.create` | `POST /api/v1/rooms/{room_id}/voice-messages` | Bearer | 필수 | multipart 음성+면접 질문 ref | `202 MessageAccepted` | 401,404,409,413,415,422,429,503 | text와 동일하게 active room만 허용; 음성 저장·전사 대상 message·Job 원자 확정 |
@@ -174,7 +175,9 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 
 면접 답변은 별도 endpoint가 아니라 `room_message.create`를 사용하고 `current_interview_question_id`를 보낸다. Service가 `interview_answers`를 동일 transaction에서 연결한다.
 
-진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`, 면접방에 `room.end`를 요청하면 `409 ROOM_END_NOT_ALLOWED_FOR_INTERVIEW`다.
+진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`다. `practice_room.complete`는 연습 유형을 가리지 않으므로 면접방 종료를 거부하지 않는다. 질문이 남았거나 목표를 이루지 못한 방도 사용자가 직접 끝낼 수 있어야 하기 때문이다.
+
+**미해결:** 종료 계열 세 endpoint(`practice_room.complete`, `practice_room.continue`, `interview_room.complete`)는 현재 `Idempotency-Key`를 받지 않는다. 종료 자체는 `status = 'in_progress'` 조건부 update 라 재요청이 방을 두 번 끝내지는 않지만, 재요청이 이미 만들어진 결과를 재생하는 대신 아무 것도 하지 않는다. 여기 적힌 값은 현재 구현이며 설계 목표가 아니다.
 
 ### 4.5 Feedback·emotion·audio·repeat
 
@@ -202,7 +205,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
-Room이 `completed`로 종료될 때 Service가 종료 사유·완료 턴 수·진행 시간·평가 cutoff를 복제한 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 사용자 종료는 `room.end`, 면접은 `interview_room.complete` 호출에서 이를 수행한다. 평가 가능한 사용자 발화가 없으면 결과 생성은 성공 상태로 마치되 `insufficient_data=true`, `overall_score=null`로 반환한다. Client result create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+Room이 `completed`로 종료될 때 Service가 종료 사유·완료 턴 수·진행 시간·평가 cutoff를 복제한 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 사용자 종료는 `practice_room.complete`, 면접관 종료 발화 뒤의 최종 확정은 `interview_room.complete` 호출에서 이를 수행한다. 한 턴도 주고받지 않은 방은 예외로, 근거 없는 피드백과 낭비되는 provider 호출을 막기 위해 result record와 Job을 만들지 않고 방만 종료한다. 평가 가능한 사용자 발화가 없으면 결과 생성은 성공 상태로 마치되 `insufficient_data=true`, `overall_score=null`로 반환한다. Client result create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
 
 ### 4.7 Interview setup·documents·analysis
 
@@ -248,7 +251,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `JobError` | `code:string`, `retryable:boolean`, `meta:object|null` |
 | `Job` | `id`, `type`, `status`, `progress`, `error|null`, `result_resource:DomainRef|null`, `created_at`, `updated_at` |
 
-`JobType`은 `conversation_text|emotion_analysis|tts_generation|turn_feedback|interview_document_analysis|interview_configuration_generation|session_result_generation`이다. queued/terminal에서 progress stage는 null이다.
+`JobType`은 `conversation_text|emotion_analysis|tts_generation|turn_feedback|interview_document_analysis|interview_configuration_generation|session_result_generation|scenario_goal_progress`이다. queued/terminal에서 progress stage는 null이다.
 
 ### 5.2 Onboarding·catalog
 
@@ -268,7 +271,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | Schema | Fields/constraints |
 | --- | --- |
 | `RoomCreateRequest` | `practice_type:'free_chat'|'scenario'`, `persona_id`, scenario일 때 `scenario_id`; owner/status 금지 |
-| `Room` | `id`, practice/catalog refs, `status:'in_progress'|'completed'`, `turn_count`, `ended_reason:null|'awaiting_user_end'|'goal_achieved'|'max_turns_reached'|'interview_completed'|'user_ended'`, `evaluation_cutoff_message_id|null`, `completed_turn_count|null`, timestamps. 기존 `completed` 사유는 과거 row 조회 호환값이며 신규 write 금지 |
+| `Room` | `id`, practice/catalog refs, `status:'in_progress'|'completed'`, `turn_count`, `ended_reason:null|'awaiting_user_end'|'goal_achieved'|'max_turns_reached'|'interview_completed'|'user_ended'`, `evaluation_cutoff_message_id|null`, `completed_turn_count|null`, timestamps. 기존 `completed` 사유는 과거 row 조회 호환값이며 신규 write 금지. `goal_achieved`는 종료가 아니라 제안 상태로도 쓰인다: 시나리오가 제한 턴 전에 필수 성공 조건을 채우면 `status`는 `in_progress`인 채 `ended_reason`만 `goal_achieved`가 되고, 사용자가 `practice_room.complete` 또는 `practice_room.continue`로 결정한다 |
 | `RoomDetail` | `Room` + safe relationship/situation/goal + interview configuration ref nullable |
 | `MessageCreateRequest` | `content:string`, `input_mode:'text'|'voice'`, 면접이면 `current_interview_question_id`; `client_request_id`는 Idempotency-Key와 같은 UUID 사용 |
 | `Message` | `id`, `room_id`, `sequence_no`, `sender_type`, `content`, `input_mode`, `delivery_status`, `reply_to_message_id|null`, safe emotion/status, timestamps |
@@ -319,7 +322,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | Aggregate | 허용 핵심 전이 | API/Worker 책임 |
 | --- | --- | --- |
 | Onboarding | incomplete → completed | complete endpoint만 server validation 후 전이 |
-| Room | in_progress → completed; 면접 종료 준비는 `in_progress + awaiting_user_end` | 시나리오는 목표 달성·최대 턴 또는 사용자 종료, 자유채팅은 사용자 종료, 면접은 종료 선언 뒤 사용자 최종 확정 시 종료 snapshot+result record+Job 자동 생성 |
+| Room | in_progress → completed; 면접 종료 준비는 `in_progress + awaiting_user_end`, 시나리오 조기 달성 제안은 `in_progress + goal_achieved` | 시나리오는 목표 달성·최대 턴 또는 사용자 종료, 자유채팅은 사용자 종료, 면접은 종료 선언 뒤 사용자 최종 확정 또는 사용자 종료 시 종료 snapshot+result record+Job 자동 생성. 조기 달성 제안은 사용자가 종료 또는 계속을 고를 때까지 terminal 이 아니다 |
 | Job | queued→processing; processing→queued/succeeded/failed/cancelled | Worker가 domain 상태와 한 transaction에서 전이; terminal immutable |
 | AI/emotion/document | processing→succeeded/failed; retryable failed→processing | Job 성공/실패와 동기화하며 API retry는 기존 domain row+새 Job·처리 토큰을 사용 |
 | Audio | processing→ready/failed | ready 연결 확정 뒤 old object 삭제 |
@@ -377,7 +380,7 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 - [x] `/api/v1`, Bearer, error envelope, idempotency, cursor 계약 포함
 - [x] Health, onboarding, catalog, rooms/messages, 감정·피드백·TTS retry, jobs/results, documents/analysis, configuration/questions/practice, account deletion 포함
 - [x] 모든 endpoint에 operationId, method/path, auth, request/response, status/error, owner chain 기재
-- [x] 7종 Job과 stage/error/result_resource, 2초 polling, 자동 result 생성 포함
+- [x] 8종 Job과 stage/error/result_resource, 2초 polling, 자동 result 생성 포함
 - [x] `processing_jobs`와 `idempotency_records`의 최신 ERD 계약 반영
 - [x] API→Service→Repository→Supabase 판정 경계와 uniform 404 포함
 - [x] raw 민감정보·signed URL snapshot·Provider 원본 비노출 포함
