@@ -163,8 +163,9 @@ def test_document_analysis_labels_chunks_with_meaning_not_document_type() -> Non
     output = _executors(provider)._document_analysis(item, "")
 
     sections = [section for _, section, _, _ in output.chunks]
-    assert sections and set(sections) <= {"summary", "skills", "experience", "risks"}
-    assert "resume" not in sections
+    # 요약은 문서 전체와 두루 가까워 라벨 후보에서 뺀다.
+    assert sections and set(sections) <= {"skills", "experience", "risks"}
+    assert "resume" not in sections and "summary" not in sections
     # 청크와 섹션 문장을 한 번에 임베딩해 호출 수를 늘리지 않는다.
     assert len(provider.embedded) == 1
 

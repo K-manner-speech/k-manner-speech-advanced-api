@@ -501,10 +501,13 @@ class WorkerExecutors:
         )
         # 방금 뽑은 섹션 문장을 청크와 같은 호출로 임베딩해, 각 청크가 문서의 어느
         # 부분인지 라벨을 붙인다. 질문 근거 검색을 경험·리스크로 좁히기 위해서다.
+        # 요약 문장은 문서 전체를 대표해 어느 조각과도 두루 가깝다. 라벨 후보에
+        # 넣으면 머리말과 첫 프로젝트가 섞인 조각까지 summary 로 가져가 버려,
+        # 이력서 10개 측정에서 프로젝트 본문 조각의 절반을 잃었다(재현율 69%).
+        # 후보에서 빼면 91% 로 회복된다.
         section_sentences = [
             (name, sentence)
             for name, sentences in (
-                ("summary", [analysis.sections.summary]),
                 ("skills", analysis.sections.skills),
                 ("experience", analysis.sections.experience),
                 ("risks", analysis.sections.risks),
