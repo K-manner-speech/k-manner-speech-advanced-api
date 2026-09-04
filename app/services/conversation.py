@@ -48,7 +48,7 @@ class ConversationService(Protocol):
     def get_room(self, user_id: UUID, room_id: UUID) -> RoomDetail: ...
     def delete_room(self, user_id: UUID, room_id: UUID, idempotency_key: UUID) -> None: ...
     def complete_interview(self, user_id: UUID, room_id: UUID) -> Room: ...
-    def complete_scenario(self, user_id: UUID, room_id: UUID) -> Room: ...
+    def complete_practice(self, user_id: UUID, room_id: UUID) -> Room: ...
     def continue_after_goal(self, user_id: UUID, room_id: UUID) -> Room: ...
     def list_messages(
         self, user_id: UUID, room_id: UUID, cursor: str | None, limit: int
@@ -249,8 +249,8 @@ class SqlConversationService:
         self._repository.commit()
         return Room.model_validate(row)
 
-    def complete_scenario(self, user_id: UUID, room_id: UUID) -> Room:
-        row = self._repository.complete_scenario(
+    def complete_practice(self, user_id: UUID, room_id: UUID) -> Room:
+        row = self._repository.complete_practice(
             user_id,
             room_id,
             get_job_execution_policy("session_result_generation").deadline_seconds,
