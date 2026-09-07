@@ -523,46 +523,37 @@ class WorkerExecutors:
         )
         if not evidence:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
-        candidates = evidence
-
-        def judge() -> EvidenceRelevanceResult:
-            return self._openai_interview.generate_structured(
-                instructions=(
-                    self._prompt_composer.task_instruction(
-                        "interview_evidence_relevance"
-                    )
-                    + suffix
-                ),
-                input_text=json.dumps(
-                    {
-                        "desired_role": item.payload.get("desired_role"),
-                        "top_similarity": candidates[0].similarity,
-                        "top1_top2_gap": relevance_score_gap(candidates),
-                        "evidence": [
-                            {
-                                "chunk_id": str(chunk.id),
-                                "section": chunk.section,
-                                "text": chunk.text,
-                                "similarity": chunk.similarity,
-                            }
-                            for chunk in candidates
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
-                schema_name="interview_evidence_relevance",
-                result_type=EvidenceRelevanceResult,
-            )
-
-        relevance = judge()
+        relevance = self._openai_interview.generate_structured(
+            instructions=(
+                self._prompt_composer.task_instruction("interview_evidence_relevance")
+                + suffix
+            ),
+            input_text=json.dumps(
+                {
+                    "desired_role": item.payload.get("desired_role"),
+                    "top_similarity": evidence[0].similarity,
+                    "top1_top2_gap": relevance_score_gap(evidence),
+                    "evidence": [
+                        {
+                            "chunk_id": str(chunk.id),
+                            "section": chunk.section,
+                            "text": chunk.text,
+                            "similarity": chunk.similarity,
+                        }
+                        for chunk in evidence
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            schema_name="interview_evidence_relevance",
+            result_type=EvidenceRelevanceResult,
+        )
         relevant = filter_relevant_evidence(evidence, relevance)
         if not relevant:
-            # 같은 입력에도 판정이 통째로 무너지는 경우가 있다. 등급을 임의로
-            # 올리면 근거 없는 질문이 나오므로, 판정을 손대지 않고 한 번 다시 묻는다.
-            relevance = judge()
-            relevant = filter_relevant_evidence(evidence, relevance)
-        if not relevant:
-            raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
+            # 검색은 근거를 찾았는데 판정이 전부 버린 상태다. 같은 입력에도 이렇게
+            # 무너지는 경우가 있으므로 근거가 없다고 단정하지 않는다. 등급을 임의로
+            # 올리면 근거 없는 질문이 나오니, 잡 재시도에 맡겨 처음부터 다시 판정한다.
+            raise AIProviderError("EVIDENCE_RELEVANCE_EMPTY", retryable=True)
         evidence = relevant
         relevance_by_id = {item.chunk_id: item for item in relevance.decisions}
         questions = self._openai_interview.generate_structured(

@@ -127,22 +127,31 @@ def test_question_generation_receives_the_application_type_the_user_chose() -> N
     assert "conditions" not in asked
 
 
-def test_total_collapse_is_judged_once_more_instead_of_being_overridden() -> None:
-    """판정이 통째로 무너지면 등급을 조작하지 않고 다시 묻는다."""
-    provider = _Provider([_chunk(), _chunk("정산 배치 중복을 막았습니다.")],
-                         ["unsupported", "supported"])
+def test_total_collapse_is_retried_by_the_job_instead_of_being_overridden() -> None:
+    """판정이 통째로 무너지면 등급을 조작하지도, 근거 없음으로 단정하지도 않는다.
 
-    output = _executors(provider)._configuration(_job(), "")
+    검색은 근거를 찾았는데 판정만 전부 버린 상태다. 같은 입력에도 이렇게 무너지는
+    경우가 있어, 한 시도 안에서 다시 묻는 대신 잡 재시도에 맡긴다. 재시도는 남은
+    deadline 을 보고 결정되므로, 예산이 없으면 LLM 을 한 번 더 부르는 대신 깨끗이
+    실패한다.
+    """
+    provider = _Provider([_chunk()], ["unsupported"])
 
-    assert len(provider.relevance_inputs) == 2
-    assert len(output.evidence) == 2
+    with pytest.raises(AIProviderError) as error:
+        _executors(provider)._configuration(_job(), "")
+
+    assert error.value.code == "EVIDENCE_RELEVANCE_EMPTY"
+    assert error.value.retryable is True
+    assert len(provider.relevance_inputs) == 1
+    assert provider.question_inputs == []
 
 
-def test_collapsing_twice_fails_instead_of_inventing_evidence() -> None:
-    provider = _Provider([_chunk()], ["unsupported", "unsupported"])
+def test_no_candidate_at_all_is_not_retried() -> None:
+    """검색이 아무것도 찾지 못한 것은 다시 물어도 달라지지 않는다."""
+    provider = _Provider([], [])
 
     with pytest.raises(AIProviderError) as error:
         _executors(provider)._configuration(_job(), "")
 
     assert error.value.code == "INSUFFICIENT_EVIDENCE"
-    assert len(provider.relevance_inputs) == 2
+    assert error.value.retryable is False
