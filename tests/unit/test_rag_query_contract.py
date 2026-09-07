@@ -109,8 +109,8 @@ def _job() -> ClaimedJob:
         schema_repair_count=0,
         deadline_at=datetime.now(UTC),
         payload={
-            "conditions": {"language": "ko", "difficulty": "junior"},
             "desired_role": "백엔드 개발자",
+            "application_type": "신입",
             "question_count": 3,
             "document_versions": {str(uuid4()): 1},
         },

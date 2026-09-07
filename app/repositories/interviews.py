@@ -316,7 +316,6 @@ class InterviewRepository:
         user_id: UUID,
         setup_id: UUID,
         analysis_ids: list[UUID],
-        conditions: dict[str, Any],
         question_count: int,
         key: UUID,
         deadline_seconds: int,
@@ -359,7 +358,7 @@ class InterviewRepository:
                     "key": key,
                     "analysis_ids": analysis_ids,
                     "question_count": question_count,
-                    "snapshot": json.dumps({"conditions": conditions}),
+                    "snapshot": json.dumps({}),
                     "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
                 },
             )
@@ -380,7 +379,6 @@ class InterviewRepository:
         self,
         user_id: UUID,
         configuration_id: UUID,
-        conditions: dict[str, Any] | None,
         question_count: int | None,
         deadline_seconds: int,
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -411,8 +409,6 @@ class InterviewRepository:
         if active is not None:
             raise RuntimeError("configuration already has an active job")
         snapshot = dict(row["document_version_snapshot"] or {})
-        if conditions is not None:
-            snapshot["conditions"] = conditions
         self._session.execute(
             text("""
                 update public.interview_configurations

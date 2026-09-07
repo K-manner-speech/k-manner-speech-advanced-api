@@ -1396,8 +1396,8 @@ class ConfigurationAdapter:
                 text(
                     """
                     select c.id, c.processing_token, c.question_count,
-                           c.document_version_snapshot, c.analysis_ids,
-                           s.desired_role
+                           c.analysis_ids,
+                           s.desired_role, s.application_type
                     from public.interview_configurations c
                     join public.interview_setups s on s.id = c.setup_id
                     where c.id = :target_id and c.status = 'processing'
@@ -1429,14 +1429,13 @@ class ConfigurationAdapter:
         )
         if len(documents) != len(row["analysis_ids"]):
             return None
-        snapshot = dict(row["document_version_snapshot"] or {})
         return TargetClaim(
             target_id,
             row["processing_token"],
             "retrieving_evidence",
             {
-                "conditions": snapshot.get("conditions", {}),
                 "desired_role": row["desired_role"],
+                "application_type": row["application_type"],
                 "question_count": row["question_count"],
                 "document_versions": {
                     str(document["id"]): document["version_no"] for document in documents

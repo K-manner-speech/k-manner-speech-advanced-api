@@ -574,7 +574,8 @@ class WorkerExecutors:
             ),
             input_text=json.dumps(
                 {
-                    "conditions": item.payload["conditions"],
+                    "desired_role": item.payload.get("desired_role"),
+                    "application_type": item.payload.get("application_type"),
                     "evidence": [
                         {
                             "chunk_id": str(chunk.id),

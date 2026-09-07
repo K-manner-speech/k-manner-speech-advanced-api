@@ -93,19 +93,19 @@ def _job() -> ClaimedJob:
         user_id=uuid4(), target_id=uuid4(), processing_token=uuid4(),
         attempt_count=1, schema_repair_count=0, deadline_at=datetime.now(UTC),
         payload={
-            "conditions": {"language": "ko", "difficulty": "junior"},
             "desired_role": "백엔드 개발자",
+            "application_type": "신입",
             "question_count": 3,
             "document_versions": {str(uuid4()): 1},
         },
     )
 
 
-def test_relevance_judgement_does_not_receive_the_question_conditions() -> None:
-    """language·difficulty 로는 청크를 판정할 수 없다.
+def test_relevance_judgement_is_given_the_role_not_the_question_settings() -> None:
+    """판정 기준은 대조할 수 있는 값이어야 한다.
 
-    판정할 것이 없는 기준을 주면 같은 입력에도 답이 흔들린다. 조건은 질문을
-    만들 때만 쓰고, 판정에는 직무만 넘긴다.
+    예전에는 {"language":"ko","difficulty":"junior"} 를 판정 기준으로 넘겨,
+    청크와 대조할 것이 없는 채로 판정하게 했다. 같은 입력에도 답이 흔들린 원인이다.
     """
     provider = _Provider([_chunk()], ["supported"])
 
@@ -114,10 +114,17 @@ def test_relevance_judgement_does_not_receive_the_question_conditions() -> None:
     judged = provider.relevance_inputs[0]
     assert "conditions" not in judged
     assert judged["desired_role"] == "백엔드 개발자"
-    # 조건은 질문 생성에는 그대로 필요하다.
-    assert provider.question_inputs[0]["conditions"] == {
-        "language": "ko", "difficulty": "junior"
-    }
+
+
+def test_question_generation_receives_the_application_type_the_user_chose() -> None:
+    """지원 유형은 사용자가 실제로 고르는 값이고 질문 깊이를 좌우한다."""
+    provider = _Provider([_chunk()], ["supported"])
+
+    _executors(provider)._configuration(_job(), "")
+
+    asked = provider.question_inputs[0]
+    assert asked["application_type"] == "신입"
+    assert "conditions" not in asked
 
 
 def test_total_collapse_is_judged_once_more_instead_of_being_overridden() -> None:

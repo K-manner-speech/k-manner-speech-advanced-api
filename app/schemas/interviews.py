@@ -62,12 +62,10 @@ class InterviewAnalysis(ContractModel):
 class InterviewConfigurationGenerateRequest(ContractModel):
     setup_id: UUID
     analysis_ids: list[UUID] = Field(min_length=1)
-    conditions: dict[str, Any]
     question_count: int = Field(ge=1, le=10)
 
 
 class InterviewConfigurationRegenerateRequest(ContractModel):
-    conditions: dict[str, Any] | None = None
     question_count: int | None = Field(default=None, ge=1, le=10)
 
 
