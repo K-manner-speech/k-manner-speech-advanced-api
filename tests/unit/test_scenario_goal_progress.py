@@ -196,12 +196,16 @@ def test_scoring_jobs_moved_off_the_realtime_queue() -> None:
     assert JOB_QUEUE_NAMES[JobType.SESSION_RESULT_GENERATION] == "evaluation_ai"
 
 
-def test_readiness_counts_every_registered_job_type() -> None:
+def test_readiness_checks_every_registered_job_type_and_its_deadline() -> None:
     """기대 개수만 고치고 조회 목록을 두면 readiness 가 영원히 통과하지 못한다."""
     source = inspect.getsource(DatabaseReadinessChecker.check)
 
     assert "policy_count == len(JobType)" in source
     # 세는 대상도 JobType 에서 파생돼야 한다. 목록이 하드코딩되면 잡을 늘려도
     # count 가 따라 오르지 않아 timeout_policies 가 계속 false 가 된다.
-    assert "[job_type.value for job_type in JobType]" in source
+    assert "for job_type in JobType" in source
     assert '"session_result_generation",' not in source
+    # 개수만 세면 코드와 DB 의 deadline 이 어긋난 것을 놓친다. reaper 가 거둔
+    # job 은 DB 값으로 새 deadline 을 잡으므로 두 값이 같아야 한다.
+    assert "get_job_execution_policy(job_type).deadline_seconds" in source
+    assert "timeout_seconds" in source

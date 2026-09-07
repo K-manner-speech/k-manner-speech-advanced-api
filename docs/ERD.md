@@ -713,7 +713,8 @@ erDiagram
 - `queued`와 terminal 상태에서는 `progress_stage`가 `NULL`이다. 처리 중에는 실제 확인 가능한 단계만 사용하며, 신뢰 가능한 총량이 있을 때만 `completed_units/total_units`를 기록한다. 시간 경과 기반 가짜 백분율은 만들지 않는다.
 - terminal Job은 불변이다. 실패에는 공개 가능한 `error_code`, `error_retryable`, allowlist `error_meta`만 저장한다. Provider 원문·프롬프트·응답·stack trace는 저장하지 않는다.
 - API의 `result_resource`는 성공 시 target 관계에서 `{type, id}`로 파생한다. 결과 본문과 URL은 Job row에 복제하지 않는다.
-- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`은 180초, `session_result_generation`과 `scenario_goal_progress`는 60초 deadline을 사용하며 최대 3회 시도한다. Job deadline은 provider client timeout보다 커야 한다.
+- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`과 `session_result_generation`은 180초, `scenario_goal_progress`와 `interview_document_analysis`는 60초 deadline을 사용하며 최대 3회 시도한다. Job deadline은 provider client timeout보다 커야 한다.
+- 이 표의 `timeout_seconds`는 reaper 가 거둔 job 을 재시도할 때 새 deadline 을 계산하는 데 쓰이고, job 생성 시점의 deadline 은 코드가 정한다. 두 값이 어긋나면 재시도가 다른 예산으로 돌기 때문에 readiness 가 전 job 유형의 값을 대조한다.
 
 ### 5.2 진행 단계 허용 목록
 
