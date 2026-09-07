@@ -8,16 +8,19 @@ from app.schemas.base import ContractModel
 from app.schemas.common import DomainRef, JobRef
 
 DocumentType = Literal["resume", "portfolio", "self_introduction"]
+# 질문 깊이를 이 값으로 조절하므로 아무 문자열이나 받으면 안 된다.
+ApplicationType = Literal["신입", "경력", "인턴"]
 
 
 class InterviewSetupCreateRequest(ContractModel):
     desired_role: str = Field(min_length=1, max_length=200)
-    application_type: str | None = Field(default=None, max_length=100)
+    application_type: ApplicationType | None = None
 
 
 class InterviewSetup(ContractModel):
     id: UUID
     desired_role: str
+    # 예전 데이터에는 목록 밖의 값이 남아 있어 응답 타입은 넓게 둔다.
     application_type: str | None
     status: str
     preparation_progress: int

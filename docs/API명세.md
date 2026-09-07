@@ -304,14 +304,14 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 
 | Schema | Fields/constraints |
 | --- | --- |
-| `InterviewSetupCreateRequest` | `desired_role:string` 1..200자, `application_type:string|null` 최대 100자; owner/status/progress 금지 |
-| `InterviewSetup` | `id`, `desired_role`, `application_type|null`, `status`, `preparation_progress`; owner ID 비노출 |
+| `InterviewSetupCreateRequest` | `desired_role:string` 1..200자, `application_type:'신입'|'경력'|'인턴'|null`; owner/status/progress 금지. 지원 유형은 질문 깊이를 정하므로 목록 밖의 값을 받지 않는다 |
+| `InterviewSetup` | `id`, `desired_role`, `application_type|null`, `status`, `preparation_progress`; owner ID 비노출. 계약이 생기기 전 데이터에는 목록 밖의 값이 남아 있어 응답 타입은 넓다 |
 | `DocumentUploadRequest` | file max 10MB. `resume`·`self_introduction`은 PDF/DOCX, `portfolio`는 PDF만 허용. `document_type:'resume'|'portfolio'|'self_introduction'`; client Storage key 금지 |
 | `InterviewDocument` | `id`, type, safe original filename, MIME, size, version, current, upload/analysis status; storage path·raw text 금지 |
 | `AnalysisAccepted` | `analysis_id`, `document_id`, `document_version`, `job` |
 | `InterviewAnalysis` | ids/version/status, normalized extracted sections, citation/source refs, safe error|null; vectors·raw Provider response 금지 |
-| `InterviewConfigurationGenerateRequest` | current `analysis_ids`, confirmed interview conditions, requested question count 1..10 |
-| `InterviewConfigurationRegenerateRequest` | confirmed changed conditions and/or question count; owner/version fields 금지 |
+| `InterviewConfigurationGenerateRequest` | current `analysis_ids`, requested question count 1..10 |
+| `InterviewConfigurationRegenerateRequest` | changed question count; owner/version fields 금지 |
 | `ConfigurationAccepted` | `configuration_id`, `version_no`, `job` |
 | `InterviewConfiguration` | id/version/status, document version snapshot, analysis refs, question count, safe error|null |
 | `InterviewQuestion` | id, sequence 1..10, text, type, required, source refs, evaluation focus |

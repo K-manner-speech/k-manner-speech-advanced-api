@@ -58,3 +58,16 @@ def test_question_rejects_unknown_fields() -> None:
         InterviewQuestionResult.model_validate(
             {"questions": [], "unexpected": True}
         )
+
+
+def test_setup_request_rejects_an_application_type_outside_the_list() -> None:
+    """질문 깊이를 이 값으로 정하므로 아무 문자열이나 받으면 안 된다."""
+    from pydantic import ValidationError
+
+    from app.schemas.interviews import InterviewSetupCreateRequest
+
+    InterviewSetupCreateRequest(desired_role="백엔드 개발자", application_type="경력")
+    InterviewSetupCreateRequest(desired_role="백엔드 개발자")
+
+    with pytest.raises(ValidationError):
+        InterviewSetupCreateRequest(desired_role="백엔드 개발자", application_type="시니어")

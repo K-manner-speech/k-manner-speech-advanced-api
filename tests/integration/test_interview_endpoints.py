@@ -44,7 +44,7 @@ def test_interview_setup_contract_is_registered() -> None:
     response = client.post(
         "/api/v1/interview-setups",
         headers={"Authorization": "Bearer good", "Idempotency-Key": str(uuid4())},
-        json={"desired_role": "Backend Engineer", "application_type": "new_hire"},
+        json={"desired_role": "Backend Engineer", "application_type": "신입"},
     )
 
     assert response.status_code == 201
