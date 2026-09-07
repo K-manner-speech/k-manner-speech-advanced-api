@@ -585,6 +585,9 @@ erDiagram
 - Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
 - 문서 분석은 `(document_id, idempotency_key)`가 unique이며 FK의 `ON DELETE RESTRICT`로 분석이 참조하는 문서 row의 물리 삭제를 막는다. 자료 삭제·교체 API는 문서 row를 `is_current = false`, `deleted_at = now()`로 논리 삭제하고 Storage 원본과 해당 vector만 정리하며 완료된 분석은 보존한다.
 - RAG chunk는 `(document_id, document_version, chunk_index)`가 unique이고 원본 정밀도의 3072차원 `vector` embedding을 가진다. HNSW는 2000차원 `vector` 제한을 피하기 위해 검색식과 동일한 `halfvec(3072)` cosine expression index를 사용한다. 검색은 Provider 호출 전에 owner, current document version, similarity threshold를 SQL에서 모두 적용하며 근거가 없으면 질문을 생성하지 않는다.
+- `interview_questions.source_evidence`의 각 항목은 `evidence_no`, `section`, `chunk_id`,
+  `document_id`, `evidence`를 가진다. `evidence_no`는 생성 당시 후보 목록에서의 번호이고,
+  나머지는 서버가 그 번호로 채운 값이다. AI 응답의 ID 를 그대로 저장하지 않는다.
 - `interview_configurations.analysis_ids`는 분석 ID snapshot 배열이며 FK 배열이 아니다. 참조 무결성은 Service/Repository가 검증한다.
 - `interview_configurations.document_version_snapshot`은 면접 조건(`conditions`)만 담고 있었으나 그 값이
   어디에서도 쓰이지 않아 제거했다. 지금은 항상 빈 object 를 쓰고 읽지 않는다. 컬럼 제거는 별도 마이그레이션으로 다룬다.
