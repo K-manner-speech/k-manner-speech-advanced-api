@@ -516,13 +516,11 @@ class SqlEvidenceRetriever:
         query_embedding: list[float],
         threshold: float,
         top_k: int,
-        sections: tuple[str, ...] | None = None,
     ) -> list[EvidenceChunk]:
         if not document_versions:
             return []
         vector = "[" + ",".join(str(value) for value in query_embedding) + "]"
         versions = {str(key): value for key, value in document_versions.items()}
-        section_filter = "and section = any(:sections)" if sections else ""
         with self._session_factory() as session:
             rows = session.execute(
                 text(
@@ -537,9 +535,6 @@ class SqlEvidenceRetriever:
                       and document_version = (
                         cast(:versions as jsonb) ->> document_id::text
                       )::integer
-                      """
-                    + section_filter
-                    + """
                       and 1 - (embedding::halfvec(3072) <=>
                                cast(:embedding as halfvec(3072))) >= :threshold
                     order by embedding::halfvec(3072) <=>
@@ -554,7 +549,6 @@ class SqlEvidenceRetriever:
                     "embedding": vector,
                     "threshold": threshold,
                     "top_k": top_k,
-                    **({"sections": list(sections)} if sections else {}),
                 },
             ).mappings()
             return [

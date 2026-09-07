@@ -26,12 +26,7 @@ from app.ai.prompts.policies.conversation import (
     build_conversation_instructions,
 )
 from app.ai.providers.gemini import pcm_to_wav
-from app.ai.rag import (
-    EVIDENCE_SECTIONS,
-    EvidenceChunk,
-    assign_sections,
-    chunk_document,
-)
+from app.ai.rag import EvidenceChunk, chunk_document
 from app.ai.schemas import (
     ConversationReply,
     ConversationSummary,
@@ -139,7 +134,6 @@ class EvidenceRetriever(Protocol):
         query_embedding: list[float],
         threshold: float,
         top_k: int,
-        sections: tuple[str, ...] | None = None,
     ) -> list[EvidenceChunk]: ...
 
 
@@ -492,50 +486,18 @@ class WorkerExecutors:
             schema_name="interview_document_analysis",
             result_type=InterviewAnalysisResult,
         )
-        document_type = str(item.payload.get("document_type", "document"))
         chunks = chunk_document(
             str(item.payload["extracted_text"]),
             maximum_tokens=250,
             overlap_tokens=50,
-            section=document_type,
+            section=str(item.payload.get("document_type", "document")),
         )
-        # 방금 뽑은 섹션 문장을 청크와 같은 호출로 임베딩해, 각 청크가 문서의 어느
-        # 부분인지 라벨을 붙인다. 질문 근거 검색을 경험·리스크로 좁히기 위해서다.
-        # 요약 문장은 문서 전체를 대표해 어느 조각과도 두루 가깝다. 라벨 후보에
-        # 넣으면 머리말과 첫 프로젝트가 섞인 조각까지 summary 로 가져가 버려,
-        # 이력서 10개 측정에서 프로젝트 본문 조각의 절반을 잃었다(재현율 69%).
-        # 후보에서 빼면 91% 로 회복된다.
-        section_sentences = [
-            (name, sentence)
-            for name, sentences in (
-                ("skills", analysis.sections.skills),
-                ("experience", analysis.sections.experience),
-                ("risks", analysis.sections.risks),
-            )
-            for sentence in sentences
-            if sentence.strip()
-        ]
-        embeddings = self._embeddings.embed(
-            [chunk.text for chunk in chunks] + [text for _, text in section_sentences]
-        )
-        chunk_embeddings = embeddings[: len(chunks)]
-        sections = assign_sections(
-            chunk_embeddings,
-            [
-                (name, embedding)
-                for (name, _), embedding in zip(
-                    section_sentences, embeddings[len(chunks) :], strict=True
-                )
-            ],
-            fallback=document_type,
-        )
+        embeddings = self._embeddings.embed([chunk.text for chunk in chunks])
         return DocumentAnalysisOutput(
             analysis=analysis,
             chunks=[
-                (chunk.index, section, chunk.text, embedding)
-                for chunk, section, embedding in zip(
-                    chunks, sections, chunk_embeddings, strict=True
-                )
+                (chunk.index, chunk.section, chunk.text, embedding)
+                for chunk, embedding in zip(chunks, embeddings, strict=True)
             ],
         )
 
@@ -558,18 +520,7 @@ class WorkerExecutors:
             query_embedding=query_embedding,
             threshold=self._rag_threshold,
             top_k=RAG_CANDIDATE_TOP_K,
-            sections=EVIDENCE_SECTIONS,
         )
-        if not evidence:
-            # 라벨이 붙기 전에 분석된 문서는 섹션 필터에 하나도 걸리지 않는다.
-            # 재분석을 요구하는 대신 문서 전체에서 다시 찾는다.
-            evidence = self._evidence_retriever.retrieve(
-                user_id=item.user_id,
-                document_versions=versions,
-                query_embedding=query_embedding,
-                threshold=self._rag_threshold,
-                top_k=RAG_CANDIDATE_TOP_K,
-            )
         if not evidence:
             raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
         relevance = self._openai_interview.generate_structured(
