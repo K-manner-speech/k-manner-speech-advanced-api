@@ -22,8 +22,8 @@ from worker.executors import (
     WorkerExecutors,
     filter_relevant_evidence,
     relevance_score_gap,
+    resolve_question_evidence,
     split_conversation_messages,
-    validate_question_evidence,
 )
 from worker.queue import ClaimedJob
 
@@ -40,14 +40,14 @@ def test_relevance_filter_preserves_order_and_rejects_missing_decisions() -> Non
     result = EvidenceRelevanceResult(
         decisions=[
             EvidenceRelevanceDecision(
-                chunk_id=first.id,
+                evidence_no=1,
                 support_level="supported",
                 supported_claims=["직접 경험"],
                 unsupported_claims=[],
                 reason="직접 근거",
             ),
             EvidenceRelevanceDecision(
-                chunk_id=second.id,
+                evidence_no=2,
                 support_level="unsupported",
                 supported_claims=[],
                 unsupported_claims=["요구 경험"],
@@ -66,7 +66,12 @@ def test_relevance_filter_preserves_order_and_rejects_missing_decisions() -> Non
         )
 
 
-def test_interview_question_source_refs_must_match_retrieved_evidence() -> None:
+def test_interview_question_source_refs_are_resolved_from_candidate_numbers() -> None:
+    """AI 는 후보 번호만 고르고 실제 근거는 서버가 채운다.
+
+    UUID 를 되돌려 받게 하면 열 번에 한 번꼴로 없는 ID 를 지어내 job 이 통째로
+    실패한다. 번호는 범위만 확인하면 되고, 지어낼 여지가 없다.
+    """
     owner_id = uuid4()
     document_id = uuid4()
     chunk_id = uuid4()
@@ -90,9 +95,10 @@ def test_interview_question_source_refs_must_match_retrieved_evidence() -> None:
                 required=True,
                 source_refs=[
                     QuestionSourceRef(
-                        section="resume",
-                        chunk_id=uuid4(),
-                        document_id=document_id,
+                        evidence_no=1,
+                        section="",
+                        chunk_id=None,
+                        document_id=None,
                         evidence=None,
                     )
                 ],
@@ -101,13 +107,29 @@ def test_interview_question_source_refs_must_match_retrieved_evidence() -> None:
         ]
     )
 
-    try:
-        validate_question_evidence(questions, evidence)
-    except AIProviderError as error:
-        assert error.schema_invalid is True
-        assert error.retryable is False
-    else:
-        raise AssertionError("fabricated RAG source reference must be rejected")
+    resolved = resolve_question_evidence(questions, evidence)
+
+    ref = resolved.questions[0].source_refs[0]
+    assert (ref.chunk_id, ref.document_id, ref.section) == (chunk_id, document_id, "resume")
+
+    out_of_range = questions.model_copy(
+        update={
+            "questions": [
+                questions.questions[0].model_copy(
+                    update={
+                        "source_refs": [
+                            questions.questions[0]
+                            .source_refs[0]
+                            .model_copy(update={"evidence_no": 2})
+                        ]
+                    }
+                )
+            ]
+        }
+    )
+    with pytest.raises(AIProviderError) as raised:
+        resolve_question_evidence(out_of_range, evidence)
+    assert raised.value.schema_invalid is True
 
 
 def test_context_rollup_preserves_latest_ai_and_user_messages_raw() -> None:

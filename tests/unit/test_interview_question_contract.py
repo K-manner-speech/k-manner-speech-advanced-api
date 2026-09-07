@@ -7,8 +7,6 @@ executors 가 provider 응답을 validate_count 로 검사한다. 같은 계약�
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 
 from app.adapters.interview_provider import (
@@ -25,7 +23,7 @@ def _question(sequence: int) -> GeneratedQuestion:
         type="required",
         required=True,
         source_refs=[QuestionSourceRef(
-            section="experience", chunk_id=uuid4(), document_id=None, evidence=None)],
+            evidence_no=1, section="", chunk_id=None, document_id=None, evidence=None)],
         evaluation_focus=["문제 해결"],
     )
 

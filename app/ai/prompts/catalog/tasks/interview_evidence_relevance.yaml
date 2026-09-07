@@ -1,5 +1,5 @@
 id: interview_evidence_relevance
-version: 3
+version: 4
 description: 검색된 이력서 청크가 면접 질문의 근거가 될 수 있는지 판정
 
 prompt: |
@@ -15,4 +15,4 @@ prompt: |
   하나의 경험이 구체적으로 적혀 있으면 다른 경험이 함께 있지 않다는 이유로
   partially_supported로 낮추지 말고 supported로 판정하세요.
   판정은 청크마다 독립적입니다. 다른 청크가 더 구체적이라는 이유로 낮추지 마세요.
-  입력된 모든 chunk_id를 정확히 한 번씩 반환하고 새로운 ID를 만들지 마세요.
+  입력된 모든 evidence_no를 정확히 한 번씩 반환하세요. 입력에 없는 번호를 만들지 마세요.

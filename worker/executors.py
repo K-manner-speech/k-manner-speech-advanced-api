@@ -111,17 +111,16 @@ def relevance_score_gap(evidence: list[EvidenceChunk]) -> float | None:
 def filter_relevant_evidence(
     evidence: list[EvidenceChunk], result: EvidenceRelevanceResult
 ) -> list[EvidenceChunk]:
-    by_id = {chunk.id: chunk for chunk in evidence}
-    decision_ids = {item.chunk_id for item in result.decisions}
-    if decision_ids != set(by_id):
+    """판정을 후보 번호로 맞춘다. 번호는 아래 payload 의 순서와 같다."""
+    decided = {item.evidence_no: item for item in result.decisions}
+    if set(decided) != set(range(1, len(evidence) + 1)):
         raise AIProviderError(
             "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
         )
     return [
         chunk
-        for chunk in evidence
-        if next(item for item in result.decisions if item.chunk_id == chunk.id).support_level
-        != "unsupported"
+        for number, chunk in enumerate(evidence, start=1)
+        if decided[number].support_level != "unsupported"
     ]
 
 
@@ -137,13 +136,15 @@ class EvidenceRetriever(Protocol):
     ) -> list[EvidenceChunk]: ...
 
 
-def validate_question_evidence(
+def resolve_question_evidence(
     questions: InterviewQuestionResult,
     evidence: list[EvidenceChunk],
-) -> None:
-    allowed_refs = {
-        (chunk.id, chunk.document_id, chunk.section) for chunk in evidence
-    }
+) -> InterviewQuestionResult:
+    """AI 가 고른 후보 번호를 실제 근거로 바꾼다.
+
+    AI 에게 UUID 를 되돌려 받지 않으므로 지어낼 여지가 없다. 번호가 범위를
+    벗어나거나 근거 없이 만든 질문만 걸러내면 된다.
+    """
     for question in questions.questions:
         if not question.source_refs:
             raise AIProviderError(
@@ -152,16 +153,36 @@ def validate_question_evidence(
                 schema_invalid=True,
             )
         if any(
-            ref.chunk_id is None
-            or ref.document_id is None
-            or (ref.chunk_id, ref.document_id, ref.section) not in allowed_refs
-            for ref in question.source_refs
+            not 1 <= ref.evidence_no <= len(evidence) for ref in question.source_refs
         ):
             raise AIProviderError(
                 "AI_PROVIDER_SCHEMA_INVALID",
                 retryable=False,
                 schema_invalid=True,
             )
+    return questions.model_copy(
+        update={
+            "questions": [
+                question.model_copy(
+                    update={
+                        "source_refs": [
+                            ref.model_copy(
+                                update={
+                                    "section": evidence[ref.evidence_no - 1].section,
+                                    "chunk_id": evidence[ref.evidence_no - 1].id,
+                                    "document_id": evidence[
+                                        ref.evidence_no - 1
+                                    ].document_id,
+                                }
+                            )
+                            for ref in question.source_refs
+                        ]
+                    }
+                )
+                for question in questions.questions
+            ]
+        }
+    )
 
 
 def split_conversation_messages(
@@ -535,12 +556,12 @@ class WorkerExecutors:
                     "top1_top2_gap": relevance_score_gap(evidence),
                     "evidence": [
                         {
-                            "chunk_id": str(chunk.id),
+                            "evidence_no": number,
                             "section": chunk.section,
                             "text": chunk.text,
                             "similarity": chunk.similarity,
                         }
-                        for chunk in evidence
+                        for number, chunk in enumerate(evidence, start=1)
                     ],
                 },
                 ensure_ascii=False,
@@ -554,8 +575,15 @@ class WorkerExecutors:
             # 무너지는 경우가 있으므로 근거가 없다고 단정하지 않는다. 등급을 임의로
             # 올리면 근거 없는 질문이 나오니, 잡 재시도에 맡겨 처음부터 다시 판정한다.
             raise AIProviderError("EVIDENCE_RELEVANCE_EMPTY", retryable=True)
+        # 판정에서 살아남은 근거만 남기고 1번부터 다시 번호를 매긴다. 질문 생성이
+        # 받는 번호와 아래에서 근거를 되찾을 때 쓰는 번호가 같아야 한다.
+        decided = {item.evidence_no: item for item in relevance.decisions}
+        surviving = [
+            decided[number]
+            for number in range(1, len(evidence) + 1)
+            if decided[number].support_level != "unsupported"
+        ]
         evidence = relevant
-        relevance_by_id = {item.chunk_id: item for item in relevance.decisions}
         questions = self._openai_interview.generate_structured(
             instructions=(
                 self._prompt_composer.task_instruction(
@@ -569,17 +597,16 @@ class WorkerExecutors:
                     "application_type": item.payload.get("application_type"),
                     "evidence": [
                         {
-                            "chunk_id": str(chunk.id),
-                            "document_id": str(chunk.document_id),
+                            "evidence_no": number,
                             "section": chunk.section,
                             "text": chunk.text,
-                            "support_level": relevance_by_id[chunk.id].support_level,
-                            "supported_claims": relevance_by_id[chunk.id].supported_claims,
-                            "unsupported_claims": relevance_by_id[
-                                chunk.id
-                            ].unsupported_claims,
+                            "support_level": decision.support_level,
+                            "supported_claims": decision.supported_claims,
+                            "unsupported_claims": decision.unsupported_claims,
                         }
-                        for chunk in evidence
+                        for number, (chunk, decision) in enumerate(
+                            zip(evidence, surviving, strict=True), start=1
+                        )
                     ],
                 },
                 ensure_ascii=False,
@@ -595,7 +622,7 @@ class WorkerExecutors:
                 retryable=False,
                 schema_invalid=True,
             ) from error
-        validate_question_evidence(questions, evidence)
+        questions = resolve_question_evidence(questions, evidence)
         return ConfigurationOutput(questions=questions, evidence=evidence)
 
     def _session_result(self, item: ClaimedJob, suffix: str) -> FinalSessionOutput:

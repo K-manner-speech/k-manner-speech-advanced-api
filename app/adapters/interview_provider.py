@@ -42,7 +42,10 @@ class InterviewAnalysisResult(BaseModel):
 class QuestionSourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    section: str = Field(min_length=1, max_length=100)
+    # AI 는 후보 번호만 고르고 section·chunk_id·document_id 는 서버가 채운다.
+    # UUID 를 되돌려 받게 하면 옮겨 적다 틀린다.
+    evidence_no: int = Field(ge=1)
+    section: str = Field(max_length=100)
     chunk_id: UUID | None
     document_id: UUID | None
     evidence: str | None = Field(max_length=1000)

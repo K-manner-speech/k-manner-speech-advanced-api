@@ -37,13 +37,13 @@ class _Provider:
             return EvidenceRelevanceResult(
                 decisions=[
                     EvidenceRelevanceDecision(
-                        chunk_id=chunk.id,
+                        evidence_no=index,
                         support_level="supported",
                         supported_claims=["근거가 있습니다."],
                         unsupported_claims=[],
                         reason="본문에 그대로 있습니다.",
                     )
-                    for chunk in self.chunks
+                    for index, chunk in enumerate(self.chunks, start=1)
                 ]
             )
         if kwargs["schema_name"] == "interview_question_generation":
@@ -57,9 +57,10 @@ class _Provider:
                         required=True,
                         source_refs=[
                             QuestionSourceRef(
-                                section=chunk.section,
-                                chunk_id=chunk.id,
-                                document_id=chunk.document_id,
+                                evidence_no=1,
+                                section="",
+                                chunk_id=None,
+                                document_id=None,
                                 evidence=chunk.text,
                             )
                         ],

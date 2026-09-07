@@ -51,12 +51,12 @@ class _Provider:
             return EvidenceRelevanceResult(
                 decisions=[
                     EvidenceRelevanceDecision(
-                        chunk_id=chunk.id, support_level=level,
+                        evidence_no=number, support_level=level,
                         supported_claims=[] if level == "unsupported" else ["물을 수 있음"],
                         unsupported_claims=["물을 수 없음"] if level != "supported" else [],
                         reason="판정",
                     )
-                    for chunk in self.chunks
+                    for number, chunk in enumerate(self.chunks, start=1)
                 ]
             )
         if kwargs["schema_name"] == "interview_question_generation":
@@ -68,8 +68,8 @@ class _Provider:
                         sequence=index, text=f"질문 {index}", type="experience",
                         required=True,
                         source_refs=[QuestionSourceRef(
-                            section=chunk.section, chunk_id=chunk.id,
-                            document_id=chunk.document_id, evidence=chunk.text)],
+                            evidence_no=1, section="", chunk_id=None,
+                            document_id=None, evidence=chunk.text)],
                         evaluation_focus=["문제 해결"],
                     )
                     for index in range(1, 4)

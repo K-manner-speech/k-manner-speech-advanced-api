@@ -73,7 +73,7 @@ def test_question_source_refs_are_stored_as_json_with_string_uuids() -> None:
                     sequence=1, text="JWT 경험을 설명해 주세요.", type="required",
                     required=True,
                     source_refs=[QuestionSourceRef(
-                        section="resume", chunk_id=chunk_id,
+                        evidence_no=1, section="resume", chunk_id=chunk_id,
                         document_id=document_id, evidence=None)],
                     evaluation_focus=["구체성"],
                 )
@@ -88,6 +88,7 @@ def test_question_source_refs_are_stored_as_json_with_string_uuids() -> None:
     stored = next(p["source_refs"] for p in session.parameters if "source_refs" in p)
     assert json.loads(str(stored)) == [
         {
+            "evidence_no": 1,
             "section": "resume",
             "chunk_id": str(chunk_id),
             "document_id": str(document_id),

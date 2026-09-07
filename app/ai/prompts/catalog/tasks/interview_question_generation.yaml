@@ -1,9 +1,11 @@
 id: interview_question_generation
-version: 4
+version: 5
 description: 근거 기반 면접 질문 생성. {question_count} 는 호출 시 채워진다
 
 prompt: |
-  제공된 근거만 사용해 면접 질문을 정확히 {question_count}개 생성하고 각 source ref를 보존하세요.
+  제공된 근거만 사용해 면접 질문을 정확히 {question_count}개 생성하세요.
+  각 질문의 source_refs에는 그 질문의 근거가 된 evidence_no를 넣으세요. 입력에 없는 번호를
+  만들지 말고, section·chunk_id·document_id는 빈 문자열과 null로 반환하세요. 서버가 채웁니다.
   partially_supported 근거는 supported_claims 범위에서만 질문하고 unsupported_claims의 경험을
   지원자가 수행했다고 가정하지 마세요. unsupported로 판정된 근거는 입력되지 않습니다.
   application_type에 맞춰 묻는 깊이를 조절하세요. 신입과 인턴에게는 무엇을 왜 그렇게 했는지와
