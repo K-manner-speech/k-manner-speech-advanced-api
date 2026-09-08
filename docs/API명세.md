@@ -205,7 +205,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `job.get` | `GET /api/v1/jobs/{job_id}` | Bearer | - | path | `200 Job` | 401,404 | direct job owner + target/result owner 재검증 |
 | `room_result.get` | `GET /api/v1/rooms/{room_id}/result` | Bearer | - | path | `200 SessionResult` | 401,404,409 | room owner; result 없거나 processing 상태 구분 |
 | `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 180초 deadline·최대 3회 시도 정책을 적용한다. |
-| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub` |
+| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub`. 행마다 `overall_score`와 `summary`를 함께 반환한다. 무엇을 다시 볼지 고르는 화면이라 제목만으로는 고를 수 없다. 아직 생성 중이거나 평가할 발화가 없던 결과에는 둘 다 `null`이다 |
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 

@@ -74,7 +74,8 @@ class ResultRepository:
                        (select j.error_code from public.processing_jobs j
                         where j.session_result_id = s.id
                         order by j.created_at desc, j.id desc limit 1) as failure_code,
-                       s.missing_categories, s.created_at
+                       s.missing_categories, s.overall_score, s.summary,
+                       s.created_at
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.user_id = :user_id
@@ -82,7 +83,15 @@ class ResultRepository:
             """),
             {"user_id": user_id, "limit": limit},
         ).mappings()
-        return [dict(row) for row in rows]
+        return [
+            {
+                **dict(row),
+                "overall_score": int(row["overall_score"])
+                if row["overall_score"] is not None
+                else None,
+            }
+            for row in rows
+        ]
 
     def retry(
         self, user_id: UUID, room_id: UUID, deadline_seconds: int
