@@ -34,6 +34,26 @@ class ConversationReply(ContractModel):
     interview_should_end: bool | None = None
 
 
+class ScenarioGoalCondition(ContractModel):
+    # OpenAI 구조화 출력은 모든 속성이 required 에 있어야 한다. 기본값을 주면
+    # required 에서 빠져 스키마 자체가 400 으로 거부되므로, nullable 로만 둔다.
+    condition_key: str = Field(min_length=1, max_length=100)
+    achieved: bool
+    evidence_sequence_no: StrictInt | None
+    reasoning: str | None = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def require_evidence_when_achieved(self) -> ScenarioGoalCondition:
+        # 근거 없는 달성은 조기 종료를 잘못 띄운다. 근거를 못 대면 미달성이다.
+        if self.achieved and self.evidence_sequence_no is None:
+            self.achieved = False
+        return self
+
+
+class ScenarioGoalProgress(ContractModel):
+    conditions: list[ScenarioGoalCondition]
+
+
 class EmotionAnalysis(ContractModel):
     label: EmotionLabel
     reasoning: str = Field(min_length=1, max_length=1000)
@@ -97,7 +117,9 @@ class ResultItemOutput(ContractModel):
 
 
 class EvidenceRelevanceDecision(ContractModel):
-    chunk_id: UUID
+    # UUID 를 그대로 되돌려 받으면 36자를 한 글자도 틀리지 않고 옮겨 적어야 한다.
+    # 실제로 열 번에 한 번꼴로 없는 ID 를 지어내 job 이 통째로 실패했다.
+    evidence_no: StrictInt = Field(ge=1)
     support_level: Literal["supported", "partially_supported", "unsupported"]
     supported_claims: list[str] = Field(max_length=5)
     unsupported_claims: list[str] = Field(max_length=5)
@@ -108,10 +130,10 @@ class EvidenceRelevanceResult(ContractModel):
     decisions: list[EvidenceRelevanceDecision]
 
     @model_validator(mode="after")
-    def require_unique_chunk_ids(self) -> EvidenceRelevanceResult:
-        chunk_ids = [item.chunk_id for item in self.decisions]
-        if len(chunk_ids) != len(set(chunk_ids)):
-            raise ValueError("duplicate evidence relevance chunk_id")
+    def require_unique_evidence_numbers(self) -> EvidenceRelevanceResult:
+        numbers = [item.evidence_no for item in self.decisions]
+        if len(numbers) != len(set(numbers)):
+            raise ValueError("duplicate evidence relevance evidence_no")
         return self
 
 

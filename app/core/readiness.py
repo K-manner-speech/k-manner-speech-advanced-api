@@ -6,6 +6,9 @@ from typing import Protocol
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.schemas.common import JobType
+from app.services.jobs import get_job_execution_policy
+
 
 @dataclass(frozen=True, slots=True)
 class ReadinessReport:
@@ -86,23 +89,28 @@ class DatabaseReadinessChecker:
                     text("select count(*) from pgmq.meta where queue_name = any(:queues)"),
                     {"queues": self._queue_names},
                 ).scalar_one()
+                # 개수만 세면 값이 어긋난 것을 놓친다. job 생성 deadline 은 코드가,
+                # reaper 가 거둔 job 의 새 deadline 은 이 표가 정하므로 둘이 다르면
+                # 재시도가 다른 예산으로 돈다.
                 policy_count = connection.execute(
                     text(
                         """
-                        select count(*) from public.processing_timeout_policies
-                        where is_active and job_type = any(:job_types)
+                        select count(*)
+                        from public.processing_timeout_policies p
+                        join unnest(
+                            cast(:job_types as text[]), cast(:deadlines as int[])
+                        ) as expected(job_type, timeout_seconds)
+                          on expected.job_type = p.job_type
+                         and expected.timeout_seconds = p.timeout_seconds
+                        where p.is_active
                         """
                     ),
                     {
-                        "job_types": [
-                            "conversation_text",
-                            "emotion_analysis",
-                            "tts_generation",
-                            "turn_feedback",
-                            "interview_document_analysis",
-                            "interview_configuration_generation",
-                            "session_result_generation",
-                        ]
+                        "job_types": [job_type.value for job_type in JobType],
+                        "deadlines": [
+                            get_job_execution_policy(job_type).deadline_seconds
+                            for job_type in JobType
+                        ],
                     },
                 ).scalar_one()
                 heartbeat_count = connection.execute(
@@ -128,7 +136,7 @@ class DatabaseReadinessChecker:
             database=database,
             required_extensions=extension_count == 2,
             pgmq_queues=queue_count == len(self._queue_names),
-            timeout_policies=policy_count == 7,
+            timeout_policies=policy_count == len(JobType),
             config=True,
             worker_heartbeat=heartbeat_count == len(self._required_worker_queues),
         )

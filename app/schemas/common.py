@@ -18,6 +18,7 @@ class JobType(StrEnum):
     INTERVIEW_DOCUMENT_ANALYSIS = "interview_document_analysis"
     INTERVIEW_CONFIGURATION_GENERATION = "interview_configuration_generation"
     SESSION_RESULT_GENERATION = "session_result_generation"
+    SCENARIO_GOAL_PROGRESS = "scenario_goal_progress"
 
 
 class JobStatus(StrEnum):

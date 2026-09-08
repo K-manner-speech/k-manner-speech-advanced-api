@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories.conversation import ConversationRepository
+from app.services.jobs import get_job_queue_name
 
 
 class InterviewRepository:
@@ -210,7 +211,7 @@ class InterviewRepository:
             analysis["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         return {"id": analysis["id"], "version": document["version"]}, job
 
     def get_analysis(self, user_id: UUID, analysis_id: UUID) -> dict[str, Any] | None:
@@ -315,7 +316,6 @@ class InterviewRepository:
         user_id: UUID,
         setup_id: UUID,
         analysis_ids: list[UUID],
-        conditions: dict[str, Any],
         question_count: int,
         key: UUID,
         deadline_seconds: int,
@@ -358,7 +358,7 @@ class InterviewRepository:
                     "key": key,
                     "analysis_ids": analysis_ids,
                     "question_count": question_count,
-                    "snapshot": json.dumps({"conditions": conditions}),
+                    "snapshot": json.dumps({}),
                     "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
                 },
             )
@@ -372,14 +372,13 @@ class InterviewRepository:
             row["id"],
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         return dict(row), job
 
     def regenerate_configuration(
         self,
         user_id: UUID,
         configuration_id: UUID,
-        conditions: dict[str, Any] | None,
         question_count: int | None,
         deadline_seconds: int,
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -410,8 +409,6 @@ class InterviewRepository:
         if active is not None:
             raise RuntimeError("configuration already has an active job")
         snapshot = dict(row["document_version_snapshot"] or {})
-        if conditions is not None:
-            snapshot["conditions"] = conditions
         self._session.execute(
             text("""
                 update public.interview_configurations
@@ -436,7 +433,7 @@ class InterviewRepository:
             configuration_id,
             deadline_seconds,
         )
-        self._jobs.enqueue("document_analysis", job["id"], user_id)
+        self._jobs.enqueue(get_job_queue_name(job["type"]), job["id"], user_id)
         self._session.commit()
         return {"id": configuration_id, "version_no": row["version_no"]}, job
 

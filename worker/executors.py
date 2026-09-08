@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -34,9 +36,11 @@ from app.ai.schemas import (
     GeneralSessionResultOutput,
     InterviewEvaluation,
     InterviewSessionResultOutput,
+    ScenarioGoalProgress,
 )
 from app.schemas.common import JobType
 from worker.queue import ClaimedJob
+from worker.tts_metrics import TTSMetrics
 
 PCM_SAMPLE_RATE = 24_000
 PCM_SAMPLE_WIDTH_BYTES = 2
@@ -89,6 +93,7 @@ class ConfigurationOutput:
 class TTSOutput:
     wav: bytes
     storage_path: str
+    metrics: TTSMetrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,17 +111,16 @@ def relevance_score_gap(evidence: list[EvidenceChunk]) -> float | None:
 def filter_relevant_evidence(
     evidence: list[EvidenceChunk], result: EvidenceRelevanceResult
 ) -> list[EvidenceChunk]:
-    by_id = {chunk.id: chunk for chunk in evidence}
-    decision_ids = {item.chunk_id for item in result.decisions}
-    if decision_ids != set(by_id):
+    """판정을 후보 번호로 맞춘다. 번호는 아래 payload 의 순서와 같다."""
+    decided = {item.evidence_no: item for item in result.decisions}
+    if set(decided) != set(range(1, len(evidence) + 1)):
         raise AIProviderError(
             "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
         )
     return [
         chunk
-        for chunk in evidence
-        if next(item for item in result.decisions if item.chunk_id == chunk.id).support_level
-        != "unsupported"
+        for number, chunk in enumerate(evidence, start=1)
+        if decided[number].support_level != "unsupported"
     ]
 
 
@@ -132,13 +136,15 @@ class EvidenceRetriever(Protocol):
     ) -> list[EvidenceChunk]: ...
 
 
-def validate_question_evidence(
+def resolve_question_evidence(
     questions: InterviewQuestionResult,
     evidence: list[EvidenceChunk],
-) -> None:
-    allowed_refs = {
-        (chunk.id, chunk.document_id, chunk.section) for chunk in evidence
-    }
+) -> InterviewQuestionResult:
+    """AI 가 고른 후보 번호를 실제 근거로 바꾼다.
+
+    AI 에게 UUID 를 되돌려 받지 않으므로 지어낼 여지가 없다. 번호가 범위를
+    벗어나거나 근거 없이 만든 질문만 걸러내면 된다.
+    """
     for question in questions.questions:
         if not question.source_refs:
             raise AIProviderError(
@@ -147,16 +153,36 @@ def validate_question_evidence(
                 schema_invalid=True,
             )
         if any(
-            ref.chunk_id is None
-            or ref.document_id is None
-            or (ref.chunk_id, ref.document_id, ref.section) not in allowed_refs
-            for ref in question.source_refs
+            not 1 <= ref.evidence_no <= len(evidence) for ref in question.source_refs
         ):
             raise AIProviderError(
                 "AI_PROVIDER_SCHEMA_INVALID",
                 retryable=False,
                 schema_invalid=True,
             )
+    return questions.model_copy(
+        update={
+            "questions": [
+                question.model_copy(
+                    update={
+                        "source_refs": [
+                            ref.model_copy(
+                                update={
+                                    "section": evidence[ref.evidence_no - 1].section,
+                                    "chunk_id": evidence[ref.evidence_no - 1].id,
+                                    "document_id": evidence[
+                                        ref.evidence_no - 1
+                                    ].document_id,
+                                }
+                            )
+                            for ref in question.source_refs
+                        ]
+                    }
+                )
+                for question in questions.questions
+            ]
+        }
+    )
 
 
 def split_conversation_messages(
@@ -211,6 +237,7 @@ class WorkerExecutors:
             JobType.INTERVIEW_DOCUMENT_ANALYSIS: self._document_analysis,
             JobType.INTERVIEW_CONFIGURATION_GENERATION: self._configuration,
             JobType.SESSION_RESULT_GENERATION: self._session_result,
+            JobType.SCENARIO_GOAL_PROGRESS: self._goal_progress,
         }
         return handlers[item.job_type](item, instructions_suffix)
 
@@ -274,6 +301,9 @@ class WorkerExecutors:
             "instructions": build_conversation_instructions(
                 is_interview=is_interview,
                 is_closing_response=is_closing_response,
+                is_scenario=room_payload.get("practice_type") == "scenario"
+                if isinstance(room_payload, dict)
+                else False,
                 catalog_prompt=catalog_prompt,
                 suffix=suffix,
             ),
@@ -377,6 +407,14 @@ class WorkerExecutors:
         )
 
     def _tts(self, item: ClaimedJob, _suffix: str) -> TTSOutput:
+        started = time.perf_counter()
+        queue_wait_ms = 0.0
+        if item.enqueued_at is not None:
+            queue_wait_ms = max(
+                0.0,
+                (datetime.now(item.enqueued_at.tzinfo) - item.enqueued_at).total_seconds() * 1000,
+            )
+        input_text = str(item.payload["text"])
         raw_bundle = item.payload.get("prompt_bundle")
         bundle = raw_bundle if isinstance(raw_bundle, str) else None
         voice = self._prompt_composer.voice_for(bundle)
@@ -386,29 +424,64 @@ class WorkerExecutors:
         stream_method = getattr(self._gemini_tts, "synthesize_stream", None)
         if self._tts_chunk_writer is not None and callable(stream_method):
             chunks: list[bytes] = []
+            provider_first_chunk_ms: float | None = None
+            db_write_ms = 0.0
             stream = cast(Callable[[str, str, str], Iterator[bytes]], stream_method)(
-                str(item.payload["text"]),
+                input_text,
                 voice.key if voice else "Kore",
                 instruction,
             )
-            for sequence_no, chunk in enumerate(batch_pcm_chunks(stream)):
+
+            def measured_stream() -> Iterator[bytes]:
+                nonlocal provider_first_chunk_ms
+                for provider_chunk in stream:
+                    if provider_chunk and provider_first_chunk_ms is None:
+                        provider_first_chunk_ms = (time.perf_counter() - started) * 1000
+                    yield provider_chunk
+
+            for sequence_no, chunk in enumerate(batch_pcm_chunks(measured_stream())):
+                write_started = time.perf_counter()
                 self._tts_chunk_writer(item, sequence_no, chunk)
+                db_write_ms += (time.perf_counter() - write_started) * 1000
                 chunks.append(chunk)
             if not chunks:
                 raise AIProviderError("AI_PROVIDER_SCHEMA_INVALID", retryable=False)
+            provider_total_ms = (time.perf_counter() - started) * 1000
+            pcm = b"".join(chunks)
             wav = pcm_to_wav(
-                b"".join(chunks),
+                pcm,
                 sample_rate=PCM_SAMPLE_RATE,
                 channels=1,
                 sample_width=PCM_SAMPLE_WIDTH_BYTES,
             )
+            audio_duration_ms = int(
+                len(pcm) / (PCM_SAMPLE_RATE * PCM_SAMPLE_WIDTH_BYTES) * 1000
+            )
         else:
             wav = self._gemini_tts.synthesize(
-                str(item.payload["text"]), voice.key if voice else "Kore", instruction
+                input_text, voice.key if voice else "Kore", instruction
             )
+            provider_total_ms = (time.perf_counter() - started) * 1000
+            provider_first_chunk_ms = provider_total_ms
+            db_write_ms = 0.0
+            audio_duration_ms = max(0, int((len(wav) - 44) / 48_000 * 1000))
+            chunks = [wav]
         return TTSOutput(
             wav=wav,
             storage_path=str(item.payload["storage_path"]),
+            metrics=TTSMetrics(
+                job_id=item.job_id,
+                message_audio_id=item.target_id,
+                text_chars=len(input_text),
+                queue_wait_ms=queue_wait_ms,
+                provider_first_chunk_ms=provider_first_chunk_ms,
+                provider_total_ms=provider_total_ms,
+                db_write_ms=db_write_ms,
+                audio_duration_ms=audio_duration_ms,
+                chunk_count=len(chunks),
+                attempt_count=item.attempt_count,
+                result="success",
+            ),
         )
 
     def _feedback(self, item: ClaimedJob, suffix: str) -> GeneralFeedback:
@@ -417,6 +490,14 @@ class WorkerExecutors:
             input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
             schema_name="turn_feedback",
             result_type=GeneralFeedback,
+        )
+
+    def _goal_progress(self, item: ClaimedJob, suffix: str) -> ScenarioGoalProgress:
+        return self._openai_feedback.generate_structured(
+            instructions=self._prompt_composer.task_instruction("scenario_goal_progress") + suffix,
+            input_text=json.dumps(item.payload, ensure_ascii=False, default=str),
+            schema_name="scenario_goal_progress",
+            result_type=ScenarioGoalProgress,
         )
 
     def _document_analysis(self, item: ClaimedJob, suffix: str) -> DocumentAnalysisOutput:
@@ -442,14 +523,13 @@ class WorkerExecutors:
         )
 
     def _configuration(self, item: ClaimedJob, suffix: str) -> ConfigurationOutput:
-        query = json.dumps(
-            {
-                "conditions": item.payload["conditions"],
-                "role": item.payload.get("desired_role"),
-            },
-            ensure_ascii=False,
-            default=str,
-        )
+        # 검색어는 이력서 본문과 같은 문체의 서술문이어야 가까워진다. JSON 은 절반이
+        # 키 이름과 기호이고, language·difficulty 는 질문을 만들 때의 조건이지
+        # 이력서에서 찾을 내용이 아니라 검색을 흐린다. 조건은 아래 프롬프트에만 넘긴다.
+        role = str(item.payload.get("desired_role") or "").strip()
+        query = (
+            f"{role} 지원자의 " if role else ""
+        ) + "실무 프로젝트 경험, 문제 해결 과정, 성능 개선과 기술 선택 근거"
         query_embedding = self._embeddings.embed([query])[0]
         versions = {
             UUID(str(document_id)): int(version)
@@ -471,18 +551,17 @@ class WorkerExecutors:
             ),
             input_text=json.dumps(
                 {
-                    "conditions": item.payload["conditions"],
                     "desired_role": item.payload.get("desired_role"),
                     "top_similarity": evidence[0].similarity,
                     "top1_top2_gap": relevance_score_gap(evidence),
                     "evidence": [
                         {
-                            "chunk_id": str(chunk.id),
+                            "evidence_no": number,
                             "section": chunk.section,
                             "text": chunk.text,
                             "similarity": chunk.similarity,
                         }
-                        for chunk in evidence
+                        for number, chunk in enumerate(evidence, start=1)
                     ],
                 },
                 ensure_ascii=False,
@@ -490,10 +569,21 @@ class WorkerExecutors:
             schema_name="interview_evidence_relevance",
             result_type=EvidenceRelevanceResult,
         )
-        evidence = filter_relevant_evidence(evidence, relevance)
-        if not evidence:
-            raise AIProviderError("INSUFFICIENT_EVIDENCE", retryable=False)
-        relevance_by_id = {item.chunk_id: item for item in relevance.decisions}
+        relevant = filter_relevant_evidence(evidence, relevance)
+        if not relevant:
+            # 검색은 근거를 찾았는데 판정이 전부 버린 상태다. 같은 입력에도 이렇게
+            # 무너지는 경우가 있으므로 근거가 없다고 단정하지 않는다. 등급을 임의로
+            # 올리면 근거 없는 질문이 나오니, 잡 재시도에 맡겨 처음부터 다시 판정한다.
+            raise AIProviderError("EVIDENCE_RELEVANCE_EMPTY", retryable=True)
+        # 판정에서 살아남은 근거만 남기고 1번부터 다시 번호를 매긴다. 질문 생성이
+        # 받는 번호와 아래에서 근거를 되찾을 때 쓰는 번호가 같아야 한다.
+        decided = {item.evidence_no: item for item in relevance.decisions}
+        surviving = [
+            decided[number]
+            for number in range(1, len(evidence) + 1)
+            if decided[number].support_level != "unsupported"
+        ]
+        evidence = relevant
         questions = self._openai_interview.generate_structured(
             instructions=(
                 self._prompt_composer.task_instruction(
@@ -503,20 +593,20 @@ class WorkerExecutors:
             ),
             input_text=json.dumps(
                 {
-                    "conditions": item.payload["conditions"],
+                    "desired_role": item.payload.get("desired_role"),
+                    "application_type": item.payload.get("application_type"),
                     "evidence": [
                         {
-                            "chunk_id": str(chunk.id),
-                            "document_id": str(chunk.document_id),
+                            "evidence_no": number,
                             "section": chunk.section,
                             "text": chunk.text,
-                            "support_level": relevance_by_id[chunk.id].support_level,
-                            "supported_claims": relevance_by_id[chunk.id].supported_claims,
-                            "unsupported_claims": relevance_by_id[
-                                chunk.id
-                            ].unsupported_claims,
+                            "support_level": decision.support_level,
+                            "supported_claims": decision.supported_claims,
+                            "unsupported_claims": decision.unsupported_claims,
                         }
-                        for chunk in evidence
+                        for number, (chunk, decision) in enumerate(
+                            zip(evidence, surviving, strict=True), start=1
+                        )
                     ],
                 },
                 ensure_ascii=False,
@@ -532,7 +622,7 @@ class WorkerExecutors:
                 retryable=False,
                 schema_invalid=True,
             ) from error
-        validate_question_evidence(questions, evidence)
+        questions = resolve_question_evidence(questions, evidence)
         return ConfigurationOutput(questions=questions, evidence=evidence)
 
     def _session_result(self, item: ClaimedJob, suffix: str) -> FinalSessionOutput:

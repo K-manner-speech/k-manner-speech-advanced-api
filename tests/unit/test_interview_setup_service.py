@@ -32,12 +32,12 @@ def test_create_setup_claims_and_commits_safe_snapshot() -> None:
     key = uuid4()
     setup_id = uuid4()
     request = InterviewSetupCreateRequest(
-        desired_role="Backend Engineer", application_type="new_hire"
+        desired_role="Backend Engineer", application_type="신입"
     )
     row = {
         "id": setup_id,
         "desired_role": "Backend Engineer",
-        "application_type": "new_hire",
+        "application_type": "신입",
         "status": "draft",
         "preparation_progress": 0,
     }
@@ -59,7 +59,7 @@ def test_create_setup_claims_and_commits_safe_snapshot() -> None:
         30,
     )
     repository.create_setup.assert_called_once_with(
-        user_id, "Backend Engineer", "new_hire"
+        user_id, "Backend Engineer", "신입"
     )
     idempotency.complete.assert_called_once_with(
         user_id,

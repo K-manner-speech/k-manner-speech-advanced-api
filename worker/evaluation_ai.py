@@ -2,7 +2,7 @@ from worker.main import run_queue
 
 
 def main() -> None:
-    run_queue("document_analysis")
+    run_queue("evaluation_ai")
 
 
 if __name__ == "__main__":

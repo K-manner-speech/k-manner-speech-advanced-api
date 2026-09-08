@@ -92,6 +92,27 @@ class StubConversationService(ConversationService):
             }
         )
 
+    def complete_practice(self, user_id: Any, room_id: Any) -> Room:
+        return Room(
+            **{
+                **room().model_dump(),
+                "practice_type": "scenario",
+                "status": "completed",
+                "ended_reason": "completed",
+                "completed_at": NOW,
+            }
+        )
+
+    def continue_after_goal(self, user_id: Any, room_id: Any) -> Room:
+        return Room(
+            **{
+                **room().model_dump(),
+                "practice_type": "scenario",
+                "status": "in_progress",
+                "ended_reason": None,
+            }
+        )
+
     def list_messages(self, user_id: Any, room_id: Any, cursor: Any, limit: int) -> Any:
         return Page(items=[message()], next_cursor=None)
 
@@ -163,6 +184,21 @@ def test_room_routes_are_exposed() -> None:
     completed = api.post(f"/api/v1/rooms/{ROOM_ID}/interview-complete", headers=AUTH)
     assert completed.status_code == 200
     assert completed.json()["status"] == "completed"
+
+
+def test_scenario_goal_choice_routes_are_exposed() -> None:
+    api = client()
+
+    completed = api.post(f"/api/v1/rooms/{ROOM_ID}/complete", headers=AUTH)
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["ended_reason"] == "completed"
+
+    # "계속하기"는 방을 끝내지 않고 조기 종료 안내만 걷어낸다.
+    resumed = api.post(f"/api/v1/rooms/{ROOM_ID}/continue", headers=AUTH)
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "in_progress"
+    assert resumed.json()["ended_reason"] is None
 
 
 def test_message_and_job_routes_are_exposed() -> None:

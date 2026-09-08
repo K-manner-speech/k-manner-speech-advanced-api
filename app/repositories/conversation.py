@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
+from app.services.jobs import get_job_queue_name, get_job_target_columns
 
 
 class InterviewQuestionModeError(ValueError):
@@ -421,7 +422,9 @@ class ConversationRepository:
             processing_id,
             deadline_seconds,
         )
-        self.enqueue("conversation_text", job_row["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("conversation_text"), job_row["id"], authenticated_user_id
+        )
         return dict(message_row), job_row
 
     def insert_job(
@@ -432,16 +435,7 @@ class ConversationRepository:
         target_id: UUID,
         deadline_seconds: int,
     ) -> dict[str, Any]:
-        allowed_columns = {
-            "message_ai_processing_id",
-            "message_emotion_analysis_id",
-            "message_audio_id",
-            "turn_feedback_id",
-            "interview_document_analysis_id",
-            "interview_configuration_id",
-            "session_result_id",
-        }
-        if target_column not in allowed_columns:
+        if target_column not in get_job_target_columns():
             raise ValueError("unsupported job target")
         job_id = uuid4()
         row = (
@@ -594,8 +588,128 @@ class ConversationRepository:
             result_id,
             deadline_seconds,
         )
-        self.enqueue("interactive_ai", job["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("session_result_generation"), job["id"], authenticated_user_id
+        )
         return dict(row)
+
+    def complete_practice(
+        self, authenticated_user_id: UUID, room_id: UUID, deadline_seconds: int
+    ) -> dict[str, Any] | None:
+        """진행 중인 방을 사용자가 직접 끝낸다.
+
+        면접의 interview-complete 는 awaiting_user_end 상태만 받는다. 목표를
+        이루지 못했거나 질문이 남았어도 그만둘 수 있어야 하므로, 여기서는
+        연습 종류와 무관하게 진행 중이기만 하면 받는다.
+        """
+        target = (
+            self._session.execute(
+                text(
+                    """
+                    select id, turn_count, practice_type, interview_configuration_id
+                    from public.practice_rooms
+                    where id = :room_id and user_id = :authenticated_user_id
+                      and status = 'in_progress'
+                    for update
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if target is None:
+            return None
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set status = 'completed', ended_reason = 'completed',
+                        completed_at = now(), updated_at = now()
+                    where id = :room_id and user_id = :authenticated_user_id
+                    returning id, title, practice_type, persona_id, scenario_id, status,
+                              turn_count, ended_reason, started_at, completed_at, updated_at
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one()
+        )
+        configuration_id = target["interview_configuration_id"]
+        if configuration_id is not None:
+            self._session.execute(
+                text(
+                    """
+                    update public.interview_configurations
+                    set status = 'completed', completed_at = now(), updated_at = now()
+                    where id = :configuration_id and user_id = :authenticated_user_id
+                    """
+                ),
+                {
+                    "configuration_id": configuration_id,
+                    "authenticated_user_id": authenticated_user_id,
+                },
+            )
+        # 한 마디도 주고받지 않은 방은 평가할 대화가 없다. 종합 피드백을 만들면
+        # 근거 없는 결과가 나오고 AI 호출만 낭비된다.
+        if int(target["turn_count"]) < 1:
+            return dict(row)
+        result_id = self._session.execute(
+            text(
+                """
+                insert into public.session_results
+                    (room_id, user_id, result_status, interview_setup_snapshot)
+                values (:room_id, :authenticated_user_id, 'processing',
+                        case when cast(:configuration_id as text) is null then null
+                             else jsonb_build_object(
+                               'configuration_id', cast(:configuration_id as text))
+                        end)
+                returning id
+                """
+            ),
+            {
+                "room_id": room_id,
+                "authenticated_user_id": authenticated_user_id,
+                "configuration_id": configuration_id,
+            },
+        ).scalar_one()
+        job = self.insert_job(
+            authenticated_user_id,
+            "session_result_generation",
+            "session_result_id",
+            result_id,
+            deadline_seconds,
+        )
+        self.enqueue(
+            get_job_queue_name("session_result_generation"), job["id"], authenticated_user_id
+        )
+        return dict(row)
+
+    def dismiss_goal_prompt(
+        self, authenticated_user_id: UUID, room_id: UUID
+    ) -> dict[str, Any] | None:
+        """사용자가 "계속하기"를 선택했다. 남은 턴 동안 다시 판정하지 않는다."""
+        row = (
+            self._session.execute(
+                text(
+                    """
+                    update public.practice_rooms
+                    set ended_reason = null, goal_prompt_dismissed_at = now(),
+                        updated_at = now()
+                    where id = :room_id and user_id = :authenticated_user_id
+                      and status = 'in_progress' and ended_reason = 'goal_achieved'
+                    returning id, title, practice_type, persona_id, scenario_id, status,
+                              turn_count, ended_reason, started_at, completed_at, updated_at
+                    """
+                ),
+                {"room_id": room_id, "authenticated_user_id": authenticated_user_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row is not None else None
 
     def retry_response(
         self,
@@ -661,7 +775,9 @@ class ConversationRepository:
             target["id"],
             deadline_seconds,
         )
-        self.enqueue("conversation_text", job["id"], authenticated_user_id)
+        self.enqueue(
+            get_job_queue_name("conversation_text"), job["id"], authenticated_user_id
+        )
         message = self.get_message(authenticated_user_id, message_id)
         if message is None:
             raise LookupError("message disappeared")

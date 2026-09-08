@@ -6,6 +6,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import BASE_QUEUE_NAMES
+
 
 @dataclass(frozen=True, slots=True)
 class StoredObject:
@@ -14,14 +16,9 @@ class StoredObject:
 
 
 class AccountDeletionRepository:
-    _QUEUES = (
-        "conversation_text",
-        "interactive_ai",
-        "document_analysis",
-        "conversation_text_dlq",
-        "interactive_ai_dlq",
-        "document_analysis_dlq",
-    )
+    # base queue 가 늘어나면 정리 대상도 함께 늘어야 한다. 빠뜨리면 탈퇴한
+    # 사용자의 queue message 가 남는다.
+    _QUEUES = tuple(name for base in BASE_QUEUE_NAMES for name in (base, f"{base}_dlq"))
 
     def __init__(self, session: Session) -> None:
         self._session = session

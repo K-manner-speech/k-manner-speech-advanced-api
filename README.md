@@ -34,16 +34,16 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 
 `.env.example`의 항목을 `.env`에 채워야 합니다. 측정 대상 값에는 코드 기본값이 없으며,
 누락 시 readiness가 안전하게 `503 SERVICE_NOT_READY`를 반환합니다. Ready는 DB, `pgmq`와
-`vector` extension, 6개 queue, timeout policy 7종, 설정을 검사합니다. Worker heartbeat는
+`vector` extension, 8개 queue, timeout policy 8종, 설정을 검사합니다. Worker heartbeat는
 `REQUIRED_WORKER_QUEUES`에 지정된 base queue만 검사하며 로컬 기본값은 현재 구현된
-`["conversation_text","interactive_ai","document_analysis"]`입니다. 세 worker를 모두
-실행해야 readiness가 통과하며, DLQ 이름은 이 설정에 넣지 않습니다.
+`["conversation_text","interactive_ai","evaluation_ai","document_analysis"]`입니다. 네
+worker를 모두 실행해야 readiness가 통과하며, DLQ 이름은 이 설정에 넣지 않습니다.
 
 JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`로 허용합니다. 음수는
 설정 오류이며, 필요 이상으로 크게 늘리지 않습니다.
 
 현재 API에는 active Auth session 검증, 인증·온보딩·회원 탈퇴·카탈로그·대화·피드백·감정·TTS·결과·면접 문서·면접 구성·Job
-조회가 포함됩니다. Worker는 일곱 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
+조회가 포함됩니다. Worker는 여덟 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
 처리합니다. 회원 탈퇴는 private Storage user-prefix object, Job/queue, DB/vector와 Supabase Auth 사용자를 즉시 영구 삭제하며 완료 뒤 멱등 snapshot을 보존하지 않습니다.
 
 ## 로컬 면접 시연
@@ -53,7 +53,7 @@ JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`
 `OPENAI_EMBEDDING_MODEL`을 채웁니다. 현재 worker와 `document_chunks.embedding` 계약은
 3072차원이므로 로컬에서는 `OPENAI_EMBEDDING_MODEL=text-embedding-3-large`,
 `OPENAI_EMBEDDING_DIMENSIONS=3072`를 사용합니다.
-API와 base queue Worker 세 개는 서로 다른 PowerShell 창에서 실행해야 합니다.
+API와 base queue Worker 네 개는 서로 다른 PowerShell 창에서 실행해야 합니다.
 
 ```powershell
 # 창 1: API
@@ -64,11 +64,15 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 $env:UV_CACHE_DIR='.uv-cache'
 uv run python -m worker.conversation_text
 
-# 창 3: 감정·TTS·피드백·결과 worker
+# 창 3: 감정·TTS worker
 $env:UV_CACHE_DIR='.uv-cache'
 uv run python -m worker.interactive_ai
 
-# 창 4: 문서 분석 및 면접 질문 생성 worker
+# 창 4: 피드백·결과·목표 판정 worker
+$env:UV_CACHE_DIR='.uv-cache'
+uv run python -m worker.evaluation_ai
+
+# 창 5: 문서 분석 및 면접 질문 생성 worker
 $env:UV_CACHE_DIR='.uv-cache'
 uv run python -m worker.document_analysis
 ```

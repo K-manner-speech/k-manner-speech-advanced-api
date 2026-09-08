@@ -1,6 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
+from app.core.config import BASE_QUEUE_NAMES
 from app.repositories.account import AccountDeletionRepository, StoredObject
 
 
@@ -63,18 +64,16 @@ def test_storage_inventory_uses_user_prefix_across_private_buckets() -> None:
 
 
 def test_account_cleanup_cancels_jobs_and_removes_all_user_queue_messages() -> None:
-    session = RecordingSession([RowsResult() for _ in range(7)])
+    # job 취소 1회 + base queue 와 각 DLQ
+    expected_calls = 1 + len(BASE_QUEUE_NAMES) * 2
+    session = RecordingSession([RowsResult() for _ in range(expected_calls)])
 
     AccountDeletionRepository(session).cancel_jobs_and_cleanup_queues(uuid4())  # type: ignore[arg-type]
 
     combined_sql = "\n".join(sql for sql, _ in session.calls)
     assert "set status = 'cancelled'" in combined_sql
-    for queue_name in (
-        "conversation_text",
-        "interactive_ai",
-        "document_analysis",
-        "conversation_text_dlq",
-        "interactive_ai_dlq",
-        "document_analysis_dlq",
-    ):
-        assert queue_name in combined_sql
+    assert len(session.calls) == expected_calls
+    # queue 를 새로 늘리면 정리 대상도 자동으로 따라와야 한다.
+    for base in BASE_QUEUE_NAMES:
+        assert base in combined_sql
+        assert f"{base}_dlq" in combined_sql
