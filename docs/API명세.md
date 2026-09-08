@@ -127,6 +127,8 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | `me.get` | `GET /api/v1/me` | Bearer | - | 없음 | `200 MeResponse` | 401,404 | `profile.id=jwt.sub` |
 | `me_profile.replace` | `PUT /api/v1/me/profile` | Bearer | - | `ProfileReplaceRequest` | `200 MeResponse` | 401,404,422 | body owner/completion 금지; missing requirements 계산 |
 | `me_language.replace` | `PUT /api/v1/me/language` | Bearer | - | `LanguageReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,422 | `ko|en`; Zustand/localStorage 값은 server 판정을 대체하지 않음 |
+| `me_email.change` | `PUT /api/v1/me/email` | Bearer | - | `EmailChangeRequest` | `200 CredentialChangeResponse` | 401,409,422,503 | 주소 변경을 요청한다. `200`이어도 아직 바뀌지 않았고, 새 주소로 간 확인 링크를 눌러야 확정된다. 확인 없이 바꾸면 오타 하나로 계정에 다시 들어올 수 없다. 응답의 `pending_email`이 확인을 기다리는 주소다. 다른 계정이 쓰는 주소는 `409 EMAIL_ALREADY_USED` |
+| `me_password.change` | `PUT /api/v1/me/password` | Bearer | - | `PasswordChangeRequest` | `200 CredentialChangeResponse` | 400,401,422,503 | 현재 비밀번호를 확인한 뒤 바꾼다. 세션만으로 바꾸게 두면 잠기지 않은 화면을 잠깐 만진 사람이 계정을 가져갈 수 있다. 현재 비밀번호가 틀리면 `400 WRONG_PASSWORD`, 새 비밀번호는 8자 이상이며 현재와 같으면 `422` |
 | `home.get` | `GET /api/v1/home` | Bearer | - | 없음 | `200 HomeSummary` | 401 | 연속 학습 상태와 오늘의 추천 대화를 함께 반환한다 |
 | `home.attend` | `POST /api/v1/home/attendance` | Bearer | 미사용 | 없음 | `200 HomeSummary` | 401 | 오늘 출석을 기록하고 갱신된 상태를 반환한다. 하루에 한 번만 기록되므로 재요청이 결과를 바꾸지 않아 `Idempotency-Key`를 받지 않는다 |
 | `me_terms.replace` | `PUT /api/v1/me/terms` | Bearer | - | `TermsReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,409,422 | 활성 필수 policy version과 일치 검증 |
@@ -176,6 +178,8 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `message_response.retry` | `POST /api/v1/messages/{message_id}/retry-response` | Bearer | 필수 | 빈 object | `202 MessageAccepted` | 401,404,409,429,503 | 기존 실패 response processing target에 새 Job; 새 user message 금지 |
 
 면접 답변은 별도 endpoint가 아니라 `room_message.create`를 사용하고 `current_interview_question_id`를 보낸다. Service가 `interview_answers`를 동일 transaction에서 연결한다.
+
+로그인 정보는 우리 표가 아니라 Supabase Auth에 있다. 두 변경 API는 사용자의 access token으로 GoTrue를 호출하고, 실패를 화면이 그대로 옮겨 적을 수 있는 코드로 바꿔 돌려준다. 인증 서버에 닿지 못한 경우만 `503`이며 `retryable=true`다.
 
 하루 경계는 `Asia/Seoul` 기준이다. `profiles`에 시간대가 없어 고정값을 쓰며, 클라이언트가 보낸 날짜는 조작할 수 있으므로 서버가 정한다. `streak_days`는 오늘까지 이어진 연속 출석 일수이고, 오늘 아직 출석하지 않았어도 어제까지 이어졌다면 유지한다. 하루가 다 가기 전에 끊긴 것으로 보지 않는다. `recent_days`는 최근 7일 안에서 출석한 날 수이며 하루를 빠뜨려도 0으로 되돌리지 않는다. 추천은 아직 완료하지 않은 시나리오를 먼저 고르고, 같은 날에는 새로고침해도 같은 것을 반환한다. 모두 해본 사용자에게는 빈 카드 대신 그중 하나를 다시 권한다.
 

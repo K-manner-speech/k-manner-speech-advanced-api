@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.base import ContractModel
 
@@ -25,6 +25,43 @@ class ProfileReplaceRequest(ContractModel):
         if value > date.today():
             raise ValueError("birth_date cannot be in the future")
         return value
+
+
+# 주소가 진짜 닿는지는 확인 메일이 판정한다. 여기서는 형태만 거른다.
+# 오탈자를 서버까지 보내지 않으려는 것이지 주소를 검증하려는 것이 아니다.
+EmailText = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        max_length=254,
+        pattern=r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$",
+    ),
+]
+
+
+class EmailChangeRequest(ContractModel):
+    """주소 변경 요청. 확인 메일을 받아야 확정된다."""
+
+    email: EmailText
+
+
+class PasswordChangeRequest(ContractModel):
+    """비밀번호 변경. 세션만으로는 바꿀 수 없고 현재 비밀번호를 확인한다."""
+
+    current_password: Annotated[str, StringConstraints(min_length=1)]
+    new_password: Annotated[str, StringConstraints(min_length=8, max_length=72)]
+
+    @model_validator(mode="after")
+    def new_password_must_differ(self) -> "PasswordChangeRequest":
+        if self.current_password == self.new_password:
+            raise ValueError("new_password must differ from current_password")
+        return self
+
+
+class CredentialChangeResponse(ContractModel):
+    """무엇이 끝났고 무엇이 남았는지 화면이 그대로 옮겨 적을 수 있게 한다."""
+
+    pending_email: str | None = None
 
 
 class ConsentInput(ContractModel):
