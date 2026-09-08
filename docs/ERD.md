@@ -585,6 +585,7 @@ erDiagram
 - Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
 - 문서 분석은 `(document_id, idempotency_key)`가 unique이며 FK의 `ON DELETE RESTRICT`로 분석이 참조하는 문서 row의 물리 삭제를 막는다. 자료 삭제·교체 API는 문서 row를 `is_current = false`, `deleted_at = now()`로 논리 삭제하고 Storage 원본과 해당 vector만 정리하며 완료된 분석은 보존한다.
 - RAG chunk는 `(document_id, document_version, chunk_index)`가 unique이고 원본 정밀도의 3072차원 `vector` embedding을 가진다. HNSW는 2000차원 `vector` 제한을 피하기 위해 검색식과 동일한 `halfvec(3072)` cosine expression index를 사용한다. 검색은 Provider 호출 전에 owner, current document version, similarity threshold를 SQL에서 모두 적용하며 근거가 없으면 질문을 생성하지 않는다.
+- `general_evaluation_scores`는 자유채팅·시나리오 결과의 항목별 점수다. `(result_id, category)`가 유일하며 결과 하나에 항목당 한 행이다. 면접의 `interview_evaluation_scores`와 같은 모양이고, 한 결과가 둘 다 갖지는 않는다. 턴별 점수의 평균이 아니라 결과 생성 AI 가 연습 전체를 보고 다시 매긴 값이다.
 - `daily_attendances`는 사용자가 `출석하기`를 누른 날짜를 담는다. `(user_id, attended_on)`이 기본키라 하루에 한 행만 남고, 재요청이 결과를 바꾸지 않는다. `attended_on`은 `Asia/Seoul` 기준 날짜이며 서버가 계산한다. 연속 일수와 최근 7일 집계는 저장하지 않고 이 표에서 계산한다.
 - `interview_questions.source_evidence`의 각 항목은 `evidence_no`, `section`, `chunk_id`,
   `document_id`, `evidence`를 가진다. `evidence_no`는 생성 당시 후보 목록에서의 번호이고,

@@ -1690,6 +1690,34 @@ class SessionResultAdapter:
                     **result_item.model_dump(exclude={"source_document_id"}),
                 },
             )
+        # 일반 결과의 항목별 점수. 면접은 아래 interview_evaluation_scores 를 쓴다.
+        session.execute(
+            text(
+                "delete from public.general_evaluation_scores where result_id = :result_id"
+            ),
+            {"result_id": item.target_id},
+        )
+        for score in getattr(output.result, "scores", []):
+            session.execute(
+                text(
+                    """
+                    insert into public.general_evaluation_scores
+                        (result_id, category, score, strength_text,
+                         suggestion_text, evidence_text)
+                    values (:result_id, :category, :score, :strength,
+                            :suggestion, :evidence)
+                    """
+                ),
+                {
+                    "result_id": item.target_id,
+                    "category": score.category,
+                    "score": score.score,
+                    "strength": score.strength,
+                    "suggestion": score.suggestion,
+                    "evidence": score.original_text,
+                },
+            )
+
         evaluation: InterviewEvaluation | None = output.interview_evaluation
         if evaluation is not None:
             for score in evaluation.scores:

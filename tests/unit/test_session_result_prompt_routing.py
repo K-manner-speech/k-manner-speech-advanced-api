@@ -39,6 +39,19 @@ class _ResultProvider:
                     "delivery_attitude",
                 )
             ]
+        else:
+            # 일반 결과는 네 항목 점수를 함께 낸다.
+            payload["scores"] = [
+                {
+                    "category": category,
+                    "score": 20,
+                    "strength": "정중하게 표현했어요.",
+                    "suggestion": None,
+                    "original_text": "부탁드립니다.",
+                    "recommended_text": None,
+                }
+                for category in ("honorifics", "courtesy", "context_fit", "naturalness")
+            ]
         return result_type.model_validate(payload)
 
     def count_tokens(self, _text: str) -> int:

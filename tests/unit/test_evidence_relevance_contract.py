@@ -155,3 +155,36 @@ def test_no_candidate_at_all_is_not_retried() -> None:
 
     assert error.value.code == "INSUFFICIENT_EVIDENCE"
     assert error.value.retryable is False
+
+
+def test_partially_supported_is_used_only_when_nothing_is_supported() -> None:
+    """물어볼 것이 있는 근거를 우선 쓰고, 없을 때만 물러선다.
+
+    잡음이 절반인 이력서 20개에서 프로젝트 본문은 모두 supported 였고 학력·자격증
+    조각이 supported 로 판정된 경우는 없었다. partially_supported 까지 받으면
+    근거의 절반이 물어볼 것 없는 이력이 된다.
+    """
+    from worker.executors import filter_relevant_evidence
+
+    body, noise = _chunk("주문 API 지연을 해결했습니다."), _chunk("정보처리기사 취득")
+    mixed = EvidenceRelevanceResult(
+        decisions=[
+            EvidenceRelevanceDecision(
+                evidence_no=1, support_level="supported",
+                supported_claims=["물을 수 있음"], unsupported_claims=[], reason="판정"),
+            EvidenceRelevanceDecision(
+                evidence_no=2, support_level="partially_supported",
+                supported_claims=[], unsupported_claims=["내용 없음"], reason="판정"),
+        ]
+    )
+
+    assert filter_relevant_evidence([body, noise], mixed) == [body]
+
+    # supported 가 하나도 없으면 근거를 통째로 잃는 대신 물러선다.
+    only_partial = EvidenceRelevanceResult(
+        decisions=[
+            decision.model_copy(update={"support_level": "partially_supported"})
+            for decision in mixed.decisions
+        ]
+    )
+    assert filter_relevant_evidence([body, noise], only_partial) == [body, noise]

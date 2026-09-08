@@ -245,10 +245,23 @@ class InterviewEvaluation(ContractModel):
         return self
 
 
-class GeneralSessionResultOutput(ContractModel):
+class SessionResultOutput(ContractModel):
     summary: str | None
     items: list[ResultItemOutput]
 
 
-class InterviewSessionResultOutput(GeneralSessionResultOutput):
+class GeneralSessionResultOutput(SessionResultOutput):
+    # 결과 요약이 종합 점수만 보여 주면 어디가 부족한지 알 수 없다. 네 항목을
+    # 연습 전체 기준으로 다시 매긴다. 턴별 피드백의 평균이 아니다.
+    scores: list[GeneralFeedbackScore]
+
+    @model_validator(mode="after")
+    def require_unique_score_categories(self) -> GeneralSessionResultOutput:
+        categories = [item.category for item in self.scores]
+        if len(categories) != len(set(categories)):
+            raise ValueError("duplicate general session score category")
+        return self
+
+
+class InterviewSessionResultOutput(SessionResultOutput):
     interview_scores: list[InterviewEvaluationScore]

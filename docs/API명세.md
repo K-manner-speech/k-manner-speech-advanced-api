@@ -295,6 +295,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `FeedbackResponse` | `status:'processing'|'ready'|'partial'|'failed'`, overall 0..100|null, summary|null, scores, emotions, retryable error|null |
 | `AudioAccessResponse` | `status:'processing'|'ready'|'failed'`, `signed_url|null`, `expires_at|null`, audio type; storage path 금지 |
 | `SessionResultSummary` | `id`, `attempt_no`, `status`, `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id|null`, `insufficient_data`, `missing_categories`, `created_at` |
+| `GeneralScore` | `category`, `score`, `max_score:25`, `strength|null`, `suggestion|null`, `evidence|null`. 자유채팅·시나리오 결과의 항목별 점수이며 연습 전체 기준이다. 면접 결과에서는 비어 있고 `interview_evaluation.scores`가 대신 쓰인다 |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
 | `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
 | `InterviewEvaluation` | `status:'succeeded'|'partial'|'failed'`, `overall_score:5..100|null`, summary, scores, `missing_categories` |

@@ -59,8 +59,20 @@ class ResultItem(ContractModel):
     order: int
 
 
+class GeneralScore(ContractModel):
+    """자유채팅·시나리오 결과의 항목별 점수. 연습 전체를 기준으로 매긴다."""
+
+    category: str
+    score: int
+    max_score: int
+    strength: str | None
+    suggestion: str | None
+    evidence: str | None
+
+
 class SessionResult(SessionResultSummary):
     items: list[ResultItem]
+    scores: list[GeneralScore] = []
     source_refs: list[DomainRef]
     overall_score: int | None = None
     summary: str | None = None

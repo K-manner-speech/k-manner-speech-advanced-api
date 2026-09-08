@@ -207,6 +207,24 @@ class ResultRepository:
             {"result_id": row["id"]},
         ).mappings()
         result = dict(row)
+        # 일반 결과의 항목별 점수. 면접 결과에는 비어 있고 아래 평가가 대신 쓰인다.
+        general_scores = [
+            {**dict(score), "score": int(score["score"])}
+            for score in self._session.execute(
+                text(
+                    """
+                    select category, score, 25 as max_score,
+                           strength_text as strength,
+                           suggestion_text as suggestion,
+                           evidence_text as evidence
+                    from public.general_evaluation_scores
+                    where result_id = :result_id
+                    order by category
+                    """
+                ),
+                {"result_id": row["id"]},
+            ).mappings()
+        ]
         interview_evaluation = None
         if result.pop("interview_setup_snapshot", None) is not None:
             score_rows = list(
@@ -241,6 +259,7 @@ class ResultRepository:
         return {
             **result,
             "items": [dict(item) for item in items],
+            "scores": general_scores,
             "source_refs": [],
             "interview_evaluation": interview_evaluation,
         }
