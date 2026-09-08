@@ -127,6 +127,8 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | `me.get` | `GET /api/v1/me` | Bearer | - | 없음 | `200 MeResponse` | 401,404 | `profile.id=jwt.sub` |
 | `me_profile.replace` | `PUT /api/v1/me/profile` | Bearer | - | `ProfileReplaceRequest` | `200 MeResponse` | 401,404,422 | body owner/completion 금지; missing requirements 계산 |
 | `me_language.replace` | `PUT /api/v1/me/language` | Bearer | - | `LanguageReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,422 | `ko|en`; Zustand/localStorage 값은 server 판정을 대체하지 않음 |
+| `home.get` | `GET /api/v1/home` | Bearer | - | 없음 | `200 HomeSummary` | 401 | 연속 학습 상태와 오늘의 추천 대화를 함께 반환한다 |
+| `home.attend` | `POST /api/v1/home/attendance` | Bearer | 미사용 | 없음 | `200 HomeSummary` | 401 | 오늘 출석을 기록하고 갱신된 상태를 반환한다. 하루에 한 번만 기록되므로 재요청이 결과를 바꾸지 않아 `Idempotency-Key`를 받지 않는다 |
 | `me_terms.replace` | `PUT /api/v1/me/terms` | Bearer | - | `TermsReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,409,422 | 활성 필수 policy version과 일치 검증 |
 | `onboarding.complete` | `POST /api/v1/me/onboarding/complete` | Bearer | 필수 | 빈 object | `200 MeResponse` | 401,404,409,422 | profile/language/필수 consent를 server가 재검증 후 완료 설정 |
 | `account.delete` | `DELETE /api/v1/me` | Bearer+active `session_id`+`get_user` | 필수 | 없음 | `204` | 401,409,500,503 | claim 확정 후 일반 API 차단, Job cancel·user queue cleanup, `storage.objects` user prefix inventory의 실제 Storage API 삭제·잔존 0 확인, Auth hard delete/cascade 순서. 부분 삭제를 성공 처리하지 않으며 성공 멱등 snapshot은 보존하지 않음 |
@@ -174,6 +176,8 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `message_response.retry` | `POST /api/v1/messages/{message_id}/retry-response` | Bearer | 필수 | 빈 object | `202 MessageAccepted` | 401,404,409,429,503 | 기존 실패 response processing target에 새 Job; 새 user message 금지 |
 
 면접 답변은 별도 endpoint가 아니라 `room_message.create`를 사용하고 `current_interview_question_id`를 보낸다. Service가 `interview_answers`를 동일 transaction에서 연결한다.
+
+하루 경계는 `Asia/Seoul` 기준이다. `profiles`에 시간대가 없어 고정값을 쓰며, 클라이언트가 보낸 날짜는 조작할 수 있으므로 서버가 정한다. `streak_days`는 오늘까지 이어진 연속 출석 일수이고, 오늘 아직 출석하지 않았어도 어제까지 이어졌다면 유지한다. 하루가 다 가기 전에 끊긴 것으로 보지 않는다. `recent_days`는 최근 7일 안에서 출석한 날 수이며 하루를 빠뜨려도 0으로 되돌리지 않는다. 추천은 아직 완료하지 않은 시나리오를 먼저 고르고, 같은 날에는 새로고침해도 같은 것을 반환한다. 모두 해본 사용자에게는 빈 카드 대신 그중 하나를 다시 권한다.
 
 진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`다. `practice_room.complete`는 연습 유형을 가리지 않으므로 면접방 종료를 거부하지 않는다. 질문이 남았거나 목표를 이루지 못한 방도 사용자가 직접 끝낼 수 있어야 하기 때문이다.
 
@@ -261,6 +265,9 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `LanguageReplaceRequest` | `display_language:'ko'|'en'` |
 | `TermsReplaceRequest` | `consents:[{consent_type,policy_version,accepted:true}]` |
 | `OnboardingStatus` | `completed:boolean`, `missing_requirements:string[]` |
+| `LearningStreak` | `attended_today:boolean`, `streak_days`, `recent_days`, `goal_days:7`, `today:date` |
+| `RecommendedPractice` | `scenario_id`, `title`, `goal|null`, `difficulty|null`, `estimated_minutes|null`, `persona_id|null`, `persona_name|null`, `relationship_label|null`, `opening_message|null`, `completed_before:boolean` |
+| `HomeSummary` | `streak:LearningStreak`, `recommendation:RecommendedPractice|null` |
 | `MeResponse` | safe profile, language, active consent status, `onboarding_status` |
 | `OnboardingMutationResponse` | 저장된 해당 domain 값 + `onboarding_status` |
 | `PersonaSummary/Detail` | catalog ID, 표시 metadata, detail은 allowed scenarios 포함 |
