@@ -8,6 +8,10 @@ from app.schemas.base import ContractModel
 # 진행 바가 7칸이고 "7일 목표" 로 표시된다.
 STREAK_GOAL_DAYS = 7
 
+# 연속 일수는 목표 창보다 길 수 있다. 1년을 넘겨 이어 온 사람은 그 자체로
+# 드물고, 한 행이 하루이므로 이 창을 읽는 값은 저렴하다.
+STREAK_WINDOW_DAYS = 366
+
 
 class LearningStreak(ContractModel):
     """홈 상단의 연속 학습 상태.

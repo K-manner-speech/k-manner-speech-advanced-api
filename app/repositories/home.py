@@ -34,7 +34,10 @@ class HomeRepository:
         )
 
     def attendance_dates(self, user_id: UUID, days: int) -> list[Any]:
-        """최근 며칠간 출석한 날짜를 최신순으로 돌려준다."""
+        """최근 며칠간 출석한 날짜를 최신순으로 돌려준다.
+
+        연속 일수는 7일 창보다 길어질 수 있으므로 호출하는 쪽이 창을 정한다.
+        """
         rows = self._session.execute(
             text(
                 """
@@ -83,7 +86,8 @@ class HomeRepository:
                     left join public.personas p on p.id = ps.persona_id
                     where s.is_active and s.practice_type = 'scenario'
                     order by (c.scenario_id is not null),
-                             md5(:user_id || (now() at time zone :zone)::text || s.id::text)
+                             md5(:user_id || (now() at time zone :zone)::date::text
+                                 || s.id::text)
                     limit 1
                     """
                 ),

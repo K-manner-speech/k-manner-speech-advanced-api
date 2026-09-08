@@ -17,6 +17,7 @@ from app.ai.interfaces import AIProviderError
 from app.ai.schemas import (
     EmotionAnalysis,
     GeneralFeedback,
+    GeneralSessionResultOutput,
     InterviewEvaluation,
     ScenarioGoalProgress,
 )
@@ -1697,7 +1698,13 @@ class SessionResultAdapter:
             ),
             {"result_id": item.target_id},
         )
-        for score in getattr(output.result, "scores", []):
+        general_result = output.result
+        general_scores = (
+            general_result.scores
+            if isinstance(general_result, GeneralSessionResultOutput)
+            else []
+        )
+        for general_score in general_scores:
             session.execute(
                 text(
                     """
@@ -1710,11 +1717,11 @@ class SessionResultAdapter:
                 ),
                 {
                     "result_id": item.target_id,
-                    "category": score.category,
-                    "score": score.score,
-                    "strength": score.strength,
-                    "suggestion": score.suggestion,
-                    "evidence": score.original_text,
+                    "category": general_score.category,
+                    "score": general_score.score,
+                    "strength": general_score.strength,
+                    "suggestion": general_score.suggestion,
+                    "evidence": general_score.original_text,
                 },
             )
 

@@ -7,6 +7,7 @@ from uuid import UUID
 from app.repositories.home import HomeRepository
 from app.schemas.home import (
     STREAK_GOAL_DAYS,
+    STREAK_WINDOW_DAYS,
     HomeSummary,
     LearningStreak,
     RecommendedPractice,
@@ -40,13 +41,16 @@ class SqlHomeService:
 
     def summary(self, user_id: UUID) -> HomeSummary:
         today = self._repository.today()
-        attended = self._repository.attendance_dates(user_id, STREAK_GOAL_DAYS)
+        # 진행 바는 최근 7일만 세지만 연속 일수는 그보다 길 수 있다. 한 번에
+        # 넓게 읽고 7일 창은 여기서 잘라 쓴다.
+        attended = self._repository.attendance_dates(user_id, STREAK_WINDOW_DAYS)
+        recent_since = today - timedelta(days=STREAK_GOAL_DAYS - 1)
         recommended = self._repository.recommend_scenario(user_id)
         return HomeSummary(
             streak=LearningStreak(
                 attended_today=today in set(attended),
                 streak_days=count_streak(attended, today),
-                recent_days=len(attended),
+                recent_days=len([day for day in attended if day >= recent_since]),
                 goal_days=STREAK_GOAL_DAYS,
                 today=today,
             ),
