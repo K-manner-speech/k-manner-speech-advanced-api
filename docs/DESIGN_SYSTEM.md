@@ -1,6 +1,6 @@
 # K-Manner Speech 디자인 시스템
 
-> 상태: MVP 1.0 하이브리드 기준안  
+> 상태: Screen Plan 1.2.0 기준안
 > 대상: 반응형 웹과 모바일 앱  
 > 문서 목적: 기획·디자인·프론트엔드·AI 응답 UI가 같은 언어와 규칙을 사용하도록 한다.
 
@@ -60,7 +60,7 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 
 ### 2.7 감성은 유지하고 행동은 명확하게 한다
 
-기존 화면 기획의 따뜻한 아이보리 배경, 실사형 페르소나, 코발트 블루 포인트와 부드러운 카드 표현을 유지한다. 동시에 전송·재생·녹음·이어하기처럼 의미가 다른 행동에는 아이콘과 텍스트 라벨을 함께 사용해 모호함을 없앤다.
+새 화면 기획의 웜 아이보리 배경, 테라코타 포인트와 부드러운 카드 표현을 유지한다. 동시에 전송·재생·녹음·이어하기처럼 의미가 다른 행동에는 아이콘과 텍스트 라벨을 함께 사용해 모호함을 없앤다.
 
 ### 2.8 모바일 앱 집중도를 웹에서도 유지한다
 
@@ -78,13 +78,13 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 
 ### 3.2 시각 방향
 
-기존 화면 기획의 장점을 계승해 **따뜻한 아이보리 배경, 코발트 블루 포인트, 넓은 여백, 둥근 카드와 실사형 AI 페르소나**를 핵심 시각 언어로 사용한다. 코발트 블루는 주요 행동과 선택 상태에 집중하고, 감정 색상은 페르소나 상태와 분석 데이터에만 제한한다. 과도하게 유아적이거나 게임처럼 보이는 장식은 피하고 성인 학습자에게도 신뢰감을 주어야 한다.
+Screen Plan 1.2.0의 **웜 아이보리 배경, 테라코타 포인트, 넓은 여백, 둥근 카드와 대화 중심 콘텐츠**를 핵심 시각 언어로 사용한다. 테라코타는 주요 행동과 선택 상태에 집중하고, 오커·브라운 계열은 보조 면과 정보 위계에 사용한다. 감정 색상은 페르소나 상태와 분석 데이터에만 제한한다. 과도하게 유아적이거나 게임처럼 보이는 장식은 피하고 성인 학습자에게도 신뢰감을 주어야 한다.
 
 ### 3.3 기존 화면 기획에서 유지할 요소
 
 - 실사형 페르소나를 주요 시각 요소로 사용하는 방식
 - 따뜻한 아이보리 앱 배경과 흰색 카드의 대비
-- 코발트 블루를 CTA, 선택 테두리, 활성 내비게이션에 사용하는 방식
+- 테라코타를 CTA, 선택 테두리, 진행 상태와 활성 내비게이션에 사용하는 방식
 - 둥근 카드, 배지, 바텀시트와 절제된 그림자
 - 시나리오 카드의 난이도·소요 시간·목표 정보 구조
 - 피드백을 대화 위 바텀시트로 확인하는 모바일 패턴
@@ -106,29 +106,33 @@ K-Manner Speech는 외국인 한국어 학습자가 문법적으로 맞는 문�
 
 ### 4.1 색상
 
-색상값의 단일 기준(Source of Truth)은 Figma `260820-1129` 파일(`G8GxBvtJDcALvKcGvaSHhH`)의 `01 Screen Plan 1.0` 페이지(`299:2165`) 안에 있는 `00 Foundations · Reusable Tokens` 섹션(`320:2`)과 `Foundation / Colors` 프레임(`320:5`)이다. 이 문서, Figma 변수, 실제 화면과 구현 코드는 아래 토큰 이름과 값을 동일하게 사용한다. 화면 노드에 HEX 값을 직접 입력하지 않고 해당 Figma 색상 변수를 바인딩한다.
+색상값의 단일 기준(Source of Truth)은 Figma `K-manner-speech-advanced` 파일(`G8GxBvtJDcALvKcGvaSHhH`)의 `01 Screen Plan 1.2.0` 페이지(`1169:2`)다. 특히 온보딩 상태 가이드(`1171:130`), 시작 화면(`1171:16`), 홈 화면(`1171:173`)과 공용 컴포넌트에 바인딩된 KMS Foundation 변수를 기준으로 한다. 이 문서, Figma 변수, 실제 화면과 구현 코드는 아래 토큰 이름과 값을 동일하게 사용한다. 화면 노드에 HEX 값을 직접 입력하지 않고 의미형 토큰을 사용한다.
 
-Figma 1.0 화면의 디자인 시스템 검수 범위는 `01 인증·온보딩`, `02 홈·연습 탐색`, `03 대화 연습`, `04 면접 연습`, `05 결과·복습`, `06 내 정보`, `07 대화방 목록` 섹션으로 한정한다. `08 팝업 화면`과 `09 상태 화면 · Loading · Empty · Error · Partial` 섹션은 이번 디자인 시스템 기준과 색상 검수 범위에서 제외하며, 해당 섹션에만 존재하는 색상은 공식 토큰으로 간주하지 않는다.
+디자인 시스템 검수 범위는 1.2.0 페이지의 `01 인증 / 온보딩`, `02 홈 화면 / 선택`, `03 대화 연습`, `04 면접 연습`, `05 결과 복습`, `06 내 정보`, `07 대화방 목록` 섹션으로 한정한다. 개별 시안에만 한 번 등장하고 공용 컴포넌트나 상태 가이드에서 반복되지 않는 값은 공식 토큰으로 승격하지 않는다.
 
 #### 브랜드와 인터랙션
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |
-| `color-brand-50` | `#F2F5FF` | 선택 배경, 약한 강조 |
-| `color-brand-600` | `#4169D8` | 기본 CTA, 링크, 선택 테두리 |
-| `color-brand-700` | `#3157BB` | 호버·눌림 상태, 강조 텍스트 |
+| `color-brand-50` | `#F7ECE3` | 선택 배경, 연속 학습 등 약한 강조 |
+| `color-brand-100` | `#F5D6CC` | 히어로·브랜드 강조 면 |
+| `color-brand-600` | `#C85F4A` | 기본 CTA, 활성 내비게이션, 진행 상태 |
+| `color-brand-700` | `#A84737` | 눌림 상태, 강한 강조 |
 
 #### 중성색
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |
 | `color-neutral-0` | `#FFFFFF` | 카드, 입력창, 메시지 면 |
-| `color-neutral-50` | `#FBFAF7` | 기본 앱 배경 |
-| `color-neutral-100` | `#F4F1EA` | 보조 배경, 비활성 면 |
-| `color-neutral-200` | `#E5E0D6` | 구분선, 테두리 |
-| `color-neutral-500` | `#837A6D` | 보조 텍스트, 비활성 아이콘 |
-| `color-neutral-700` | `#4A453E` | 본문 텍스트 |
-| `color-neutral-900` | `#23211E` | 제목, 핵심 텍스트 |
+| `color-neutral-50` | `#FFF8F0` | 기본 앱 배경, 역상 텍스트 |
+| `color-neutral-100` | `#F1E5D6` | 보조 카드·중성 강조 면 |
+| `color-neutral-200` | `#E4D4C8` | 진행 트랙, 비활성 면 |
+| `color-neutral-300` | `#D4BFB5` | 기본 입력·구분선 테두리 |
+| `color-neutral-400` | `#B29485` | 입력 완료 테두리 |
+| `color-neutral-500` | `#81675F` | 보조 텍스트, 비활성 아이콘 |
+| `color-neutral-600` | `#5D4942` | 본문·설명 텍스트 |
+| `color-neutral-700` | `#503B30` | 강조 본문 |
+| `color-neutral-900` | `#35231F` | 제목, 핵심 텍스트 |
 
 #### 의미 색상
 
@@ -136,7 +140,7 @@ Figma 1.0 화면의 디자인 시스템 검수 범위는 `01 인증·온보딩`,
 | --- | --- | --- |
 | `color-success-600` | `#059669` | 성공, 강점, 높은 적합도 |
 | `color-warning-600` | `#D97706` | 주의, 개선 가능 |
-| `color-danger-600` | `#DC2626` | 오류, 녹음 실패, 위험 동작 |
+| `color-danger-600` | `#B82E26` | 입력 오류, 녹음 실패, 위험 동작 |
 | `color-info-600` | `#2563EB` | 안내, 시스템 정보 |
 
 #### 의미형 색상 매핑
@@ -170,28 +174,29 @@ Figma 화면에서는 위 의미형 토큰을 우선 바인딩한다. 의미형 
 
 ### 4.2 타이포그래피
 
-기본 서체는 한국어와 라틴 문자를 모두 안정적으로 지원하는 `Pretendard Variable`을 사용한다. 로드 실패 시 `Noto Sans KR`, 시스템 sans-serif 순으로 대체한다.
+기본 서체는 Figma 1.2.0 화면과 동일한 `Noto Sans KR`을 사용한다. 영문 버튼처럼 Figma 컴포넌트에서 명시된 경우에만 `Inter`를 사용하며, 로드 실패 시 시스템 sans-serif로 대체한다.
 
 ```css
-font-family: "Pretendard Variable", "Noto Sans KR", -apple-system,
+font-family: "Noto Sans KR", -apple-system,
   BlinkMacSystemFont, "Segoe UI", sans-serif;
 ```
 
 | 토큰 | 크기/행간 | 굵기 | 용도 |
 | --- | --- | --- | --- |
-| `type-display` | `32/42px` | 700 | 랜딩 핵심 문구 |
-| `type-heading-1` | `28/38px` | 700 | 페이지 제목 |
-| `type-heading-2` | `22/32px` | 700 | 섹션 제목 |
-| `type-heading-3` | `18/28px` | 600 | 카드 제목 |
-| `type-body-lg` | `17/28px` | 400 | 채팅 메시지, 주요 설명 |
-| `type-body-md` | `15/24px` | 400 | 기본 본문 |
-| `type-body-sm` | `13/20px` | 400 | 보조 설명 |
-| `type-label` | `14/20px` | 600 | 버튼, 입력 라벨 |
-| `type-caption` | `12/18px` | 500 | 시간, 상태, 출처 |
+| `type-display` | `32/42px` | 700 | 점수·대형 성과 표시 |
+| `type-heading-1` | `22/30px` | 700 | 모바일 페이지·시작 화면 제목 |
+| `type-heading-2` | `18/27px` | 700 | 섹션·다이얼로그 제목 |
+| `type-heading-3` | `15/23px` | 700 | 카드 제목 |
+| `type-body-lg` | `15/21px` | 400 | 채팅 메시지, 주요 설명 |
+| `type-body-md` | `13/18.2px` | 400 | 기본 본문, 입력 텍스트 |
+| `type-body-sm` | `12/18px` | 400 | 보조 설명 |
+| `type-label` | `14/20px` | 700 | 버튼, 입력 라벨 |
+| `type-caption` | `11/16px` | 400–700 | 상태, 내비게이션, 오류 문구 |
+| `type-micro` | `10/15px` | 400–700 | 카드 메타데이터 |
 | `type-score` | `32/36px` | 700 | 종합 점수 |
 
-- 웹·앱 본문은 15px 미만으로 축소하지 않는다.
-- 채팅 메시지는 학습 가독성을 위해 기본 17px을 사용한다.
+- 학습 문장과 채팅 메시지는 15px 미만으로 축소하지 않는다. 10–13px은 상태·메타데이터·짧은 설명에만 사용한다.
+- 영문 전용 CTA에 `Inter`를 사용하더라도 한국어가 섞이면 `Noto Sans KR`로 통일한다.
 - 한국어 문장에는 과도한 자간을 적용하지 않는다.
 - 점수만 크게 표시하지 말고 반드시 평가 항목명과 해석을 함께 제공한다.
 
@@ -221,16 +226,18 @@ font-family: "Pretendard Variable", "Noto Sans KR", -apple-system,
 | `radius-lg` | `16px` | 카드, 피드백 블록 |
 | `radius-xl` | `24px` | 대화 패널, 모달 |
 | `radius-full` | `9999px` | 아바타, 칩, 녹음 버튼 |
-| `border-default` | `1px solid #E5E0D6` | 일반 경계 |
-| `border-focus` | `2px solid #4169D8` | 키보드 포커스 |
+| `border-default` | `1px solid #D4BFB5` | 일반 경계, 기본 입력 |
+| `border-filled` | `1px solid #B29485` | 입력 완료 경계 |
+| `border-focus` | `2px solid #C85F4A` | 키보드 포커스 |
 
 ### 4.5 그림자
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |
-| `shadow-sm` | `0 1px 2px rgba(35,33,30,.06)` | 입력, 작은 카드 |
-| `shadow-md` | `0 8px 24px rgba(35,33,30,.10)` | 떠 있는 패널 |
-| `shadow-lg` | `0 20px 48px rgba(35,33,30,.14)` | 모달, 데스크톱 상세 패널 |
+| `shadow-sm` | `0 1px 2px rgba(53,35,31,.06)` | 입력, 작은 카드 |
+| `shadow-button` | `0 6px 14px rgba(89,31,20,.22)` | 기본 Primary 버튼 |
+| `shadow-md` | `0 8px 24px rgba(0,0,0,.16)` | 다이얼로그, 떠 있는 패널 |
+| `shadow-hero` | `0 8px 9px rgba(89,31,20,.28)` | 시작 화면 핵심 CTA |
 
 그림자보다 배경과 테두리로 구조를 먼저 구분한다.
 
@@ -309,7 +316,10 @@ font-family: "Pretendard Variable", "Noto Sans KR", -apple-system,
 
 #### 규칙
 
-- 최소 높이 44px, 모바일 핵심 버튼은 48px을 권장한다.
+- 공용 Primary/Secondary 버튼의 최소 터치 높이는 52px이다. 다이얼로그·카드 내부의 압축형 버튼에만 44px을 허용한다.
+- 기본 Primary는 `#C85F4A`, pressed는 `#A84737`, disabled는 `#F1DFD8` 배경과 `#75665E` 라벨을 사용한다.
+- 기본 버튼 모서리는 12px, 온보딩 상태 가이드의 대형 CTA는 14px을 사용한다. 좌우 패딩은 16px을 기본으로 한다.
+- Primary 라벨은 흰색 또는 웜 아이보리이며 14px Bold를 기본으로 한다. 시작 화면의 대표 CTA는 16px Semibold까지 허용한다.
 - 로딩 중에는 라벨을 유지하고 스피너를 함께 표시한다.
 - 비활성 상태에는 비활성 이유를 주변 문구로 설명한다.
 - 한 화면에 Primary 버튼은 원칙적으로 하나만 둔다.
@@ -319,6 +329,9 @@ font-family: "Pretendard Variable", "Noto Sans KR", -apple-system,
 ### 6.2 입력창
 
 - 기본, 포커스, 입력됨, 오류, 비활성 상태를 제공한다.
+- 높이는 48px, 좌우 패딩은 14px, 모서리는 12px을 기본으로 한다.
+- 기본 테두리는 1px `#D4BFB5`, 포커스는 2px `#C85F4A`, 입력 완료는 1px `#B29485`, 오류는 2px `#B82E26`을 사용한다.
+- 입력·placeholder는 13px Regular를 기본으로 하며, 오류 문구는 11px Regular `#B82E26`을 사용한다.
 - 라벨은 placeholder로 대체하지 않는다.
 - 오류 문구는 필드 바로 아래에 구체적으로 표시한다.
 - 채팅 입력은 여러 줄을 지원하되 5줄 이후 내부 스크롤로 전환한다.
@@ -502,7 +515,7 @@ MVP에서는 자유 채팅, 기본 상황 시나리오, 이력서 기반 면접 
 - 모바일에서는 2열 카드, 좁은 화면에서는 1열 전환을 허용한다.
 - 실사형 썸네일, 이름, 사용자와의 관계, 대화 상황, 친밀도 또는 격식 수준을 표시한다.
 - `캠퍼스 훈남`처럼 외모 중심의 모호한 설명보다 `같은 학교 선배`, `IT 기업 면접관`처럼 관계와 역할을 우선한다.
-- 선택 상태는 코발트 블루 테두리, 체크 표시와 텍스트로 함께 표현한다.
+- 선택 상태는 테라코타 테두리, 체크 표시와 텍스트로 함께 표현한다.
 - 잠긴 카드도 핵심 관계와 학습 목적을 읽을 수 있어야 하며 해제 조건을 안내한다.
 - MVP에서는 검색 버튼을 표시하지 않는다.
 
@@ -715,19 +728,23 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
 
 ```css
 :root {
-  --color-brand-50: #f2f5ff;
-  --color-brand-600: #4169d8;
-  --color-brand-700: #3157bb;
+  --color-brand-50: #f7ece3;
+  --color-brand-100: #f5d6cc;
+  --color-brand-600: #c85f4a;
+  --color-brand-700: #a84737;
   --color-neutral-0: #ffffff;
-  --color-neutral-50: #fbfaf7;
-  --color-neutral-100: #f4f1ea;
-  --color-neutral-200: #e5e0d6;
-  --color-neutral-500: #837a6d;
-  --color-neutral-700: #4a453e;
-  --color-neutral-900: #23211e;
+  --color-neutral-50: #fff8f0;
+  --color-neutral-100: #f1e5d6;
+  --color-neutral-200: #e4d4c8;
+  --color-neutral-300: #d4bfb5;
+  --color-neutral-400: #b29485;
+  --color-neutral-500: #81675f;
+  --color-neutral-600: #5d4942;
+  --color-neutral-700: #503b30;
+  --color-neutral-900: #35231f;
   --color-success-600: #059669;
   --color-warning-600: #d97706;
-  --color-danger-600: #dc2626;
+  --color-danger-600: #b82e26;
   --color-info-600: #2563eb;
 
   --color-surface-app: var(--color-neutral-50);
@@ -739,8 +756,10 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
   --color-action-primary-hover: var(--color-brand-700);
   --color-text-primary: var(--color-neutral-900);
   --color-text-secondary: var(--color-neutral-500);
-  --color-border-default: var(--color-neutral-200);
+  --color-border-default: var(--color-neutral-300);
   --color-border-selected: var(--color-brand-600);
+  --color-border-filled: var(--color-neutral-400);
+  --color-action-primary-disabled: #f1dfd8;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -756,8 +775,10 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px rgb(35 33 30 / 6%);
-  --shadow-md: 0 8px 24px rgb(35 33 30 / 10%);
+  --shadow-sm: 0 1px 2px rgb(53 35 31 / 6%);
+  --shadow-button: 0 6px 14px rgb(89 31 20 / 22%);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 16%);
+  --shadow-hero: 0 8px 9px rgb(89 31 20 / 28%);
 }
 ```
 
@@ -820,6 +841,6 @@ WCAG 2.2 AA 수준을 MVP 목표로 한다.
 - MVP는 라이트 테마를 우선한다.
 - 웹과 앱은 동일한 디자인 토큰과 컴포넌트 의미를 공유한다.
 - 피드백 평가는 `높임법`, `예의와 배려`, `상황 적합성`, `자연스러움` 네 항목을 기본으로 한다.
-- 브랜드 핵심색은 기존 화면 기획과 결합한 코발트 블루 계열을 사용한다.
+- 브랜드 핵심색은 Screen Plan 1.2.0에서 반복 확인되는 테라코타 계열을 사용한다.
 
 가정은 PRD, 사용자 조사, 기술 검증 결과에 따라 변경할 수 있으며 변경 이유를 문서에 남긴다.
