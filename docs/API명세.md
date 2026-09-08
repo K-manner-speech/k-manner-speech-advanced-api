@@ -200,12 +200,12 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `job.get` | `GET /api/v1/jobs/{job_id}` | Bearer | - | path | `200 Job` | 401,404 | direct job owner + target/result owner 재검증 |
 | `room_result.get` | `GET /api/v1/rooms/{room_id}/result` | Bearer | - | path | `200 SessionResult` | 401,404,409 | room owner; result 없거나 processing 상태 구분 |
-| `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 60초 deadline·최대 3회 시도 정책을 적용한다. |
+| `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 180초 deadline·최대 3회 시도 정책을 적용한다. |
 | `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub` |
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
-Room이 `completed`로 종료될 때 Service가 종료 사유·완료 턴 수·진행 시간·평가 cutoff를 복제한 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 사용자 종료는 `practice_room.complete`, 면접관 종료 발화 뒤의 최종 확정은 `interview_room.complete` 호출에서 이를 수행한다. 한 턴도 주고받지 않은 방은 예외로, 근거 없는 피드백과 낭비되는 provider 호출을 막기 위해 result record와 Job을 만들지 않고 방만 종료한다. 평가 가능한 사용자 발화가 없으면 결과 생성은 성공 상태로 마치되 `insufficient_data=true`, `overall_score=null`로 반환한다. Client result create endpoint는 없다. `session_result_generation`은 60초 deadline과 최대 3회 시도 정책을 사용한다.
+Room이 `completed`로 종료될 때 Service가 종료 사유·완료 턴 수·진행 시간·평가 cutoff를 복제한 단일 `session_result` processing record를 만들고 결과 Job을 자동 enqueue한다. 사용자 종료는 `practice_room.complete`, 면접관 종료 발화 뒤의 최종 확정은 `interview_room.complete` 호출에서 이를 수행한다. 한 턴도 주고받지 않은 방은 예외로, 근거 없는 피드백과 낭비되는 provider 호출을 막기 위해 result record와 Job을 만들지 않고 방만 종료한다. 평가 가능한 사용자 발화가 없으면 결과 생성은 성공 상태로 마치되 `insufficient_data=true`, `overall_score=null`로 반환한다. Client result create endpoint는 없다. `session_result_generation`은 180초 deadline과 최대 3회 시도 정책을 사용한다.
 
 ### 4.7 Interview setup·documents·analysis
 
@@ -304,14 +304,14 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 
 | Schema | Fields/constraints |
 | --- | --- |
-| `InterviewSetupCreateRequest` | `desired_role:string` 1..200자, `application_type:string|null` 최대 100자; owner/status/progress 금지 |
-| `InterviewSetup` | `id`, `desired_role`, `application_type|null`, `status`, `preparation_progress`; owner ID 비노출 |
+| `InterviewSetupCreateRequest` | `desired_role:string` 1..200자, `application_type:'신입'|'경력'|'인턴'|null`; owner/status/progress 금지. 지원 유형은 질문 깊이를 정하므로 목록 밖의 값을 받지 않는다 |
+| `InterviewSetup` | `id`, `desired_role`, `application_type|null`, `status`, `preparation_progress`; owner ID 비노출. 계약이 생기기 전 데이터에는 목록 밖의 값이 남아 있어 응답 타입은 넓다 |
 | `DocumentUploadRequest` | file max 10MB. `resume`·`self_introduction`은 PDF/DOCX, `portfolio`는 PDF만 허용. `document_type:'resume'|'portfolio'|'self_introduction'`; client Storage key 금지 |
 | `InterviewDocument` | `id`, type, safe original filename, MIME, size, version, current, upload/analysis status; storage path·raw text 금지 |
 | `AnalysisAccepted` | `analysis_id`, `document_id`, `document_version`, `job` |
 | `InterviewAnalysis` | ids/version/status, normalized extracted sections, citation/source refs, safe error|null; vectors·raw Provider response 금지 |
-| `InterviewConfigurationGenerateRequest` | current `analysis_ids`, confirmed interview conditions, requested question count 1..10 |
-| `InterviewConfigurationRegenerateRequest` | confirmed changed conditions and/or question count; owner/version fields 금지 |
+| `InterviewConfigurationGenerateRequest` | current `analysis_ids`, requested question count 1..10 |
+| `InterviewConfigurationRegenerateRequest` | changed question count; owner/version fields 금지 |
 | `ConfigurationAccepted` | `configuration_id`, `version_no`, `job` |
 | `InterviewConfiguration` | id/version/status, document version snapshot, analysis refs, question count, safe error|null |
 | `InterviewQuestion` | id, sequence 1..10, text, type, required, source refs, evaluation focus |
@@ -360,7 +360,7 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 - Browser의 app table/queue 직접 CRUD, 공개 Storage URL, raw path/type assertion, service role 노출은 금지한다.
 - OAuth/account linking, OCR, ClamAV, Redis/Celery, SSE/WebSocket, generic cancel API, admin API는 MVP 범위 밖이다.
 - Cloud 배포·운영은 범위 밖이며 React/FastAPI/Python worker의 로컬 실행과 원격 Supabase/Gemini/OpenAI만 전제한다.
-- 측정 전 임의 숫자를 만들지 않는다: pagination limit, user queue limit, worker concurrency, RAG threshold, context summary trigger, document minimum text chars, worker heartbeat TTL, idempotency lease/retention. 모두 기본값 없는 필수 환경변수다. `session_result_generation`은 확정된 60초 deadline·최대 3회 시도를 사용한다.
+- 측정 전 임의 숫자를 만들지 않는다: pagination limit, user queue limit, worker concurrency, RAG threshold, context summary trigger, document minimum text chars, worker heartbeat TTL, idempotency lease/retention. 모두 기본값 없는 필수 환경변수다. `session_result_generation`은 확정된 180초 deadline·최대 3회 시도를 사용한다.
 
 ## 10. 근거 추적표
 
@@ -392,4 +392,4 @@ Auth dependency는 검증된 `jwt.sub`만 아래 계층으로 전달한다. Prov
 2. Idempotency action allowlist에는 실제 존재하는 create/action/delete operationId만 seed한다.
 3. Generated TypeScript client가 raw path 없이 모든 endpoint를 호출하는지 검사한다.
 4. 각 owner chain에 owner/non-owner/nonexistent 통합 테스트를 둔다.
-5. `session_result_generation`의 60초·최대 3회 정책이 누락되거나 비활성화되면 readiness와 enqueue가 fail-closed인지 검사한다.
+5. `session_result_generation`의 180초·최대 3회 정책이 누락·비활성화되거나 코드의 deadline 과 값이 다르면 readiness와 enqueue가 fail-closed인지 검사한다.

@@ -585,7 +585,14 @@ erDiagram
 - Service는 `resume`과 `self_introduction`에 PDF 또는 DOCX를 허용하고 `portfolio`에는 PDF만 허용한다. 모든 문서는 10MB 이하이며 확장자, magic bytes, 실제 MIME과 parser 결과가 일치해야 한다.
 - 문서 분석은 `(document_id, idempotency_key)`가 unique이며 FK의 `ON DELETE RESTRICT`로 분석이 참조하는 문서 row의 물리 삭제를 막는다. 자료 삭제·교체 API는 문서 row를 `is_current = false`, `deleted_at = now()`로 논리 삭제하고 Storage 원본과 해당 vector만 정리하며 완료된 분석은 보존한다.
 - RAG chunk는 `(document_id, document_version, chunk_index)`가 unique이고 원본 정밀도의 3072차원 `vector` embedding을 가진다. HNSW는 2000차원 `vector` 제한을 피하기 위해 검색식과 동일한 `halfvec(3072)` cosine expression index를 사용한다. 검색은 Provider 호출 전에 owner, current document version, similarity threshold를 SQL에서 모두 적용하며 근거가 없으면 질문을 생성하지 않는다.
+- `interview_questions.source_evidence`의 각 항목은 `evidence_no`, `section`, `chunk_id`,
+  `document_id`, `evidence`를 가진다. `evidence_no`는 생성 당시 후보 목록에서의 번호이고,
+  나머지는 서버가 그 번호로 채운 값이다. AI 응답의 ID 를 그대로 저장하지 않는다.
 - `interview_configurations.analysis_ids`는 분석 ID snapshot 배열이며 FK 배열이 아니다. 참조 무결성은 Service/Repository가 검증한다.
+- `interview_configurations.document_version_snapshot`은 면접 조건(`conditions`)만 담고 있었으나 그 값이
+  어디에서도 쓰이지 않아 제거했다. 지금은 항상 빈 object 를 쓰고 읽지 않는다. 컬럼 제거는 별도 마이그레이션으로 다룬다.
+- 질문 깊이는 `interview_setups.application_type`(`신입`·`경력`·`인턴`)으로 정한다. 계약이 생기기 전
+  데이터에는 목록 밖의 값이 남아 있으므로 컬럼에 CHECK 제약을 걸지 않고 API 에서 검증한다.
 - 면접 설정은 `(setup_id, version_no)`와 `(setup_id, idempotency_key)`가 unique다.
 - 한 setup에는 `processing`, `ready`, `in_progress` 상태의 활성 configuration이 하나만 존재한다.
 - 질문은 configuration당 1~10개이며 `(configuration_id, sequence_no)`가 unique다. Trigger가 `question_count`를 동기화한다.
@@ -709,7 +716,8 @@ erDiagram
 - `queued`와 terminal 상태에서는 `progress_stage`가 `NULL`이다. 처리 중에는 실제 확인 가능한 단계만 사용하며, 신뢰 가능한 총량이 있을 때만 `completed_units/total_units`를 기록한다. 시간 경과 기반 가짜 백분율은 만들지 않는다.
 - terminal Job은 불변이다. 실패에는 공개 가능한 `error_code`, `error_retryable`, allowlist `error_meta`만 저장한다. Provider 원문·프롬프트·응답·stack trace는 저장하지 않는다.
 - API의 `result_resource`는 성공 시 target 관계에서 `{type, id}`로 파생한다. 결과 본문과 URL은 Job row에 복제하지 않는다.
-- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`은 180초, `session_result_generation`과 `scenario_goal_progress`는 60초 deadline을 사용하며 최대 3회 시도한다. Job deadline은 provider client timeout보다 커야 한다.
+- timeout policy key는 위 canonical `job_type`을 사용한다. 현행 runtime에서 `interview_configuration_generation`과 `session_result_generation`은 180초, `scenario_goal_progress`와 `interview_document_analysis`는 60초 deadline을 사용하며 최대 3회 시도한다. Job deadline은 provider client timeout보다 커야 한다.
+- 이 표의 `timeout_seconds`는 reaper 가 거둔 job 을 재시도할 때 새 deadline 을 계산하는 데 쓰이고, job 생성 시점의 deadline 은 코드가 정한다. 두 값이 어긋나면 재시도가 다른 예산으로 돌기 때문에 readiness 가 전 job 유형의 값을 대조한다.
 
 ### 5.2 진행 단계 허용 목록
 

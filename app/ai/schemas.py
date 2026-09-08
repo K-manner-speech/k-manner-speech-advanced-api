@@ -117,7 +117,9 @@ class ResultItemOutput(ContractModel):
 
 
 class EvidenceRelevanceDecision(ContractModel):
-    chunk_id: UUID
+    # UUID 를 그대로 되돌려 받으면 36자를 한 글자도 틀리지 않고 옮겨 적어야 한다.
+    # 실제로 열 번에 한 번꼴로 없는 ID 를 지어내 job 이 통째로 실패했다.
+    evidence_no: StrictInt = Field(ge=1)
     support_level: Literal["supported", "partially_supported", "unsupported"]
     supported_claims: list[str] = Field(max_length=5)
     unsupported_claims: list[str] = Field(max_length=5)
@@ -128,10 +130,10 @@ class EvidenceRelevanceResult(ContractModel):
     decisions: list[EvidenceRelevanceDecision]
 
     @model_validator(mode="after")
-    def require_unique_chunk_ids(self) -> EvidenceRelevanceResult:
-        chunk_ids = [item.chunk_id for item in self.decisions]
-        if len(chunk_ids) != len(set(chunk_ids)):
-            raise ValueError("duplicate evidence relevance chunk_id")
+    def require_unique_evidence_numbers(self) -> EvidenceRelevanceResult:
+        numbers = [item.evidence_no for item in self.decisions]
+        if len(numbers) != len(set(numbers)):
+            raise ValueError("duplicate evidence relevance evidence_no")
         return self
 
 

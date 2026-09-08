@@ -317,7 +317,6 @@ class SqlInterviewService:
                 user_id,
                 request.setup_id,
                 request.analysis_ids,
-                request.conditions,
                 request.question_count,
                 key,
                 get_job_execution_policy("interview_configuration_generation").deadline_seconds,
@@ -386,7 +385,6 @@ class SqlInterviewService:
             value = self._repository.regenerate_configuration(
                 user_id,
                 configuration_id,
-                request.conditions,
                 request.question_count,
                 get_job_execution_policy("interview_configuration_generation").deadline_seconds,
             )
