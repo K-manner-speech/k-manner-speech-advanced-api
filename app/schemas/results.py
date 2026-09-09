@@ -44,6 +44,11 @@ class SessionResultSummary(ContractModel):
     status: ResultStatus
     failure_code: str | None = None
     missing_categories: list[str]
+    # 목록에서 점수와 한 줄 요약을 함께 보여 준다. 무엇을 다시 볼지
+    # 고르는 화면이라 제목만으로는 고를 수 없다. 아직 생성 중이거나
+    # 평가할 발화가 없던 결과에는 둘 다 없다.
+    overall_score: int | None = None
+    summary: str | None = None
     created_at: datetime
 
 
@@ -59,9 +64,19 @@ class ResultItem(ContractModel):
     order: int
 
 
+class GeneralScore(ContractModel):
+    """자유채팅·시나리오 결과의 항목별 점수. 연습 전체를 기준으로 매긴다."""
+
+    category: str
+    score: int
+    max_score: int
+    strength: str | None
+    suggestion: str | None
+    evidence: str | None
+
+
 class SessionResult(SessionResultSummary):
     items: list[ResultItem]
+    scores: list[GeneralScore] = []
     source_refs: list[DomainRef]
-    overall_score: int | None = None
-    summary: str | None = None
     interview_evaluation: InterviewEvaluationResponse | None = None

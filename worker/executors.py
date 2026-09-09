@@ -111,16 +111,31 @@ def relevance_score_gap(evidence: list[EvidenceChunk]) -> float | None:
 def filter_relevant_evidence(
     evidence: list[EvidenceChunk], result: EvidenceRelevanceResult
 ) -> list[EvidenceChunk]:
-    """판정을 후보 번호로 맞춘다. 번호는 아래 payload 의 순서와 같다."""
+    """판정을 후보 번호로 맞춘다. 번호는 아래 payload 의 순서와 같다.
+
+    supported 를 우선 쓰고, 하나도 없을 때만 partially_supported 로 물러선다.
+    잡음이 절반인 이력서 20개를 재 보니 프로젝트 본문 42개는 모두 supported 였고
+    학력·자격증·어학 조각이 supported 로 판정된 경우는 없었다. 반면 그런 조각의
+    40% 가 partially_supported 로 나와, 이것까지 받으면 근거의 절반이 물어볼 것
+    없는 이력이 된다. 다만 프로젝트가 얕은 이력서는 supported 가 없을 수 있어
+    근거를 통째로 잃지 않도록 물러설 자리를 둔다.
+    """
     decided = {item.evidence_no: item for item in result.decisions}
     if set(decided) != set(range(1, len(evidence) + 1)):
         raise AIProviderError(
             "AI_PROVIDER_SCHEMA_INVALID", retryable=False, schema_invalid=True
         )
+    supported = [
+        chunk
+        for number, chunk in enumerate(evidence, start=1)
+        if decided[number].support_level == "supported"
+    ]
+    if supported:
+        return supported
     return [
         chunk
         for number, chunk in enumerate(evidence, start=1)
-        if decided[number].support_level != "unsupported"
+        if decided[number].support_level == "partially_supported"
     ]
 
 

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.schemas.common import ErrorEnvelope, Job, JobProgress, JobRef
 from app.schemas.feedback import FeedbackScore
 from app.schemas.profile import LanguageReplaceRequest
+from app.schemas.results import SessionResultSummary
 from app.schemas.rooms import MessageCreateRequest, RoomCreateRequest
 from app.services.idempotency import validate_client_request_id
 
@@ -231,3 +232,39 @@ def test_feedback_score_uses_fixed_categories_and_integer_range(
             original_text="원문",
             recommended_text="추천 표현",
         )
+
+
+def test_result_list_row_carries_score_and_summary() -> None:
+    """목록에서 무엇을 다시 볼지 고르려면 제목만으로는 부족하다."""
+    row = SessionResultSummary(
+        id=uuid4(),
+        room_id=uuid4(),
+        attempt_no=1,
+        practice_type="scenario",
+        display_title="학교 식당 위치 묻기",
+        status="succeeded",
+        missing_categories=[],
+        overall_score=82,
+        summary="정중하고 자연스럽게 필요한 정보를 물었어요.",
+        created_at=datetime(2026, 9, 8, tzinfo=UTC),
+    )
+
+    assert row.overall_score == 82
+    assert row.summary == "정중하고 자연스럽게 필요한 정보를 물었어요."
+
+
+def test_result_list_row_allows_missing_score_while_processing() -> None:
+    """아직 만드는 중이거나 평가할 발화가 없던 결과에는 점수가 없다."""
+    row = SessionResultSummary(
+        id=uuid4(),
+        room_id=uuid4(),
+        attempt_no=1,
+        practice_type="free_chat",
+        display_title="자유채팅",
+        status="processing",
+        missing_categories=[],
+        created_at=datetime(2026, 9, 8, tzinfo=UTC),
+    )
+
+    assert row.overall_score is None
+    assert row.summary is None

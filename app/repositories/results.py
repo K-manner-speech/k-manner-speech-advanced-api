@@ -74,7 +74,8 @@ class ResultRepository:
                        (select j.error_code from public.processing_jobs j
                         where j.session_result_id = s.id
                         order by j.created_at desc, j.id desc limit 1) as failure_code,
-                       s.missing_categories, s.created_at
+                       s.missing_categories, s.overall_score, s.summary,
+                       s.created_at
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.user_id = :user_id
@@ -82,7 +83,15 @@ class ResultRepository:
             """),
             {"user_id": user_id, "limit": limit},
         ).mappings()
-        return [dict(row) for row in rows]
+        return [
+            {
+                **dict(row),
+                "overall_score": int(row["overall_score"])
+                if row["overall_score"] is not None
+                else None,
+            }
+            for row in rows
+        ]
 
     def retry(
         self, user_id: UUID, room_id: UUID, deadline_seconds: int
@@ -207,6 +216,24 @@ class ResultRepository:
             {"result_id": row["id"]},
         ).mappings()
         result = dict(row)
+        # 일반 결과의 항목별 점수. 면접 결과에는 비어 있고 아래 평가가 대신 쓰인다.
+        general_scores = [
+            {**dict(score), "score": int(score["score"])}
+            for score in self._session.execute(
+                text(
+                    """
+                    select category, score, 25 as max_score,
+                           strength_text as strength,
+                           suggestion_text as suggestion,
+                           evidence_text as evidence
+                    from public.general_evaluation_scores
+                    where result_id = :result_id
+                    order by category
+                    """
+                ),
+                {"result_id": row["id"]},
+            ).mappings()
+        ]
         interview_evaluation = None
         if result.pop("interview_setup_snapshot", None) is not None:
             score_rows = list(
@@ -241,6 +268,7 @@ class ResultRepository:
         return {
             **result,
             "items": [dict(item) for item in items],
+            "scores": general_scores,
             "source_refs": [],
             "interview_evaluation": interview_evaluation,
         }

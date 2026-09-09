@@ -16,12 +16,15 @@ from app.core.dependencies import get_session, get_settings
 from app.repositories.account import AccountDeletionRepository
 from app.repositories.users import UserRepository
 from app.schemas.profile import (
+    CredentialChangeResponse,
     LanguageReplaceRequest,
     MeResponse,
+    PasswordChangeRequest,
     ProfileReplaceRequest,
     TermsReplaceRequest,
 )
 from app.services.account import AccountDeletionService, SqlAccountDeletionService
+from app.services.credentials import CredentialService, SupabaseCredentialService
 from app.services.idempotency import IdempotencyRepository
 from app.services.users import SqlUserService, UserService
 
@@ -44,6 +47,17 @@ def get_account_deletion_service(
         IdempotencyRepository(session),
         settings.idempotency_lease_seconds,
         settings.idempotency_retention_seconds,
+    )
+
+
+def get_credential_service(
+    settings: Annotated[AppSettings, Depends(get_settings)],
+) -> CredentialService:
+    return SupabaseCredentialService(
+        SupabaseAccountAuthGateway(
+            settings.supabase_url,
+            settings.supabase_service_role_key.get_secret_value(),
+        )
     )
 
 
@@ -106,3 +120,17 @@ def delete_account(
 ) -> Response:
     service.delete_account(user.id, user.access_token, idempotency_key)
     return Response(status_code=204)
+
+
+@router.put(
+    "/me/password",
+    operation_id="me_password.change",
+    response_model=CredentialChangeResponse,
+)
+def change_password(
+    request: PasswordChangeRequest,
+    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
+    service: Annotated[CredentialService, Depends(get_credential_service)],
+) -> CredentialChangeResponse:
+    """현재 비밀번호를 확인한 뒤 바꾼다. 세션만으로는 바꾸지 않는다."""
+    return service.change_password(user.access_token, request)

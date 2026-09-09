@@ -127,6 +127,9 @@ Job status는 `queued|processing|succeeded|failed|cancelled`다. `progress.stage
 | `me.get` | `GET /api/v1/me` | Bearer | - | 없음 | `200 MeResponse` | 401,404 | `profile.id=jwt.sub` |
 | `me_profile.replace` | `PUT /api/v1/me/profile` | Bearer | - | `ProfileReplaceRequest` | `200 MeResponse` | 401,404,422 | body owner/completion 금지; missing requirements 계산 |
 | `me_language.replace` | `PUT /api/v1/me/language` | Bearer | - | `LanguageReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,422 | `ko|en`; Zustand/localStorage 값은 server 판정을 대체하지 않음 |
+| `me_password.change` | `PUT /api/v1/me/password` | Bearer | - | `PasswordChangeRequest` | `200 CredentialChangeResponse` | 400,401,422,503 | 현재 비밀번호를 확인한 뒤 바꾼다. 세션만으로 바꾸게 두면 잠기지 않은 화면을 잠깐 만진 사람이 계정을 가져갈 수 있다. 현재 비밀번호가 틀리면 `400 WRONG_PASSWORD`, 새 비밀번호는 8자 이상이며 현재와 같으면 `422` |
+| `home.get` | `GET /api/v1/home` | Bearer | - | 없음 | `200 HomeSummary` | 401 | 연속 학습 상태와 오늘의 추천 대화를 함께 반환한다 |
+| `home.attend` | `POST /api/v1/home/attendance` | Bearer | 미사용 | 없음 | `200 HomeSummary` | 401 | 오늘 출석을 기록하고 갱신된 상태를 반환한다. 하루에 한 번만 기록되므로 재요청이 결과를 바꾸지 않아 `Idempotency-Key`를 받지 않는다 |
 | `me_terms.replace` | `PUT /api/v1/me/terms` | Bearer | - | `TermsReplaceRequest` | `200 OnboardingMutationResponse` | 401,404,409,422 | 활성 필수 policy version과 일치 검증 |
 | `onboarding.complete` | `POST /api/v1/me/onboarding/complete` | Bearer | 필수 | 빈 object | `200 MeResponse` | 401,404,409,422 | profile/language/필수 consent를 server가 재검증 후 완료 설정 |
 | `account.delete` | `DELETE /api/v1/me` | Bearer+active `session_id`+`get_user` | 필수 | 없음 | `204` | 401,409,500,503 | claim 확정 후 일반 API 차단, Job cancel·user queue cleanup, `storage.objects` user prefix inventory의 실제 Storage API 삭제·잔존 0 확인, Auth hard delete/cascade 순서. 부분 삭제를 성공 처리하지 않으며 성공 멱등 snapshot은 보존하지 않음 |
@@ -175,6 +178,12 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 
 면접 답변은 별도 endpoint가 아니라 `room_message.create`를 사용하고 `current_interview_question_id`를 보낸다. Service가 `interview_answers`를 동일 transaction에서 연결한다.
 
+로그인 정보는 우리 표가 아니라 Supabase Auth에 있다. `me_password.change`는 사용자의 access token으로 GoTrue를 호출하고, 실패를 화면이 그대로 옮겨 적을 수 있는 코드로 바꿔 돌려준다. 인증 서버에 닿지 못한 경우만 `503`이며 `retryable=true`다.
+
+이메일 변경 API는 두지 않는다. 가입에 쓴 주소가 계정을 가리키는 이름이고, 바뀌면 지난 연습 기록과 결과를 누구 것으로 볼지가 흔들린다. 화면에서도 읽기 전용으로만 보여 준다.
+
+하루 경계는 `Asia/Seoul` 기준이다. `profiles`에 시간대가 없어 고정값을 쓰며, 클라이언트가 보낸 날짜는 조작할 수 있으므로 서버가 정한다. `streak_days`는 오늘까지 이어진 연속 출석 일수이고, 오늘 아직 출석하지 않았어도 어제까지 이어졌다면 유지한다. 하루가 다 가기 전에 끊긴 것으로 보지 않는다. `recent_days`는 최근 7일 안에서 출석한 날 수이며 하루를 빠뜨려도 0으로 되돌리지 않는다. 추천은 아직 완료하지 않은 시나리오를 먼저 고르고, 같은 날에는 새로고침해도 같은 것을 반환한다. 모두 해본 사용자에게는 빈 카드 대신 그중 하나를 다시 권한다.
+
 진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`다. `practice_room.complete`는 연습 유형을 가리지 않으므로 면접방 종료를 거부하지 않는다. 질문이 남았거나 목표를 이루지 못한 방도 사용자가 직접 끝낼 수 있어야 하기 때문이다.
 
 **미해결:** 종료 계열 세 endpoint(`practice_room.complete`, `practice_room.continue`, `interview_room.complete`)는 현재 `Idempotency-Key`를 받지 않는다. 종료 자체는 `status = 'in_progress'` 조건부 update 라 재요청이 방을 두 번 끝내지는 않지만, 재요청이 이미 만들어진 결과를 재생하는 대신 아무 것도 하지 않는다. 여기 적힌 값은 현재 구현이며 설계 목표가 아니다.
@@ -201,7 +210,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `job.get` | `GET /api/v1/jobs/{job_id}` | Bearer | - | path | `200 Job` | 401,404 | direct job owner + target/result owner 재검증 |
 | `room_result.get` | `GET /api/v1/rooms/{room_id}/result` | Bearer | - | path | `200 SessionResult` | 401,404,409 | room owner; result 없거나 processing 상태 구분 |
 | `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 180초 deadline·최대 3회 시도 정책을 적용한다. |
-| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub` |
+| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub`. 행마다 `overall_score`와 `summary`를 함께 반환한다. 무엇을 다시 볼지 고르는 화면이라 제목만으로는 고를 수 없다. 아직 생성 중이거나 평가할 발화가 없던 결과에는 둘 다 `null`이다 |
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
@@ -261,6 +270,9 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `LanguageReplaceRequest` | `display_language:'ko'|'en'` |
 | `TermsReplaceRequest` | `consents:[{consent_type,policy_version,accepted:true}]` |
 | `OnboardingStatus` | `completed:boolean`, `missing_requirements:string[]` |
+| `LearningStreak` | `attended_today:boolean`, `streak_days`, `recent_days`, `goal_days:7`, `today:date` |
+| `RecommendedPractice` | `scenario_id`, `title`, `goal|null`, `difficulty|null`, `estimated_minutes|null`, `persona_id|null`, `persona_name|null`, `relationship_label|null`, `opening_message|null`, `completed_before:boolean` |
+| `HomeSummary` | `streak:LearningStreak`, `recommendation:RecommendedPractice|null` |
 | `MeResponse` | safe profile, language, active consent status, `onboarding_status` |
 | `OnboardingMutationResponse` | 저장된 해당 domain 값 + `onboarding_status` |
 | `PersonaSummary/Detail` | catalog ID, 표시 metadata, detail은 allowed scenarios 포함 |
@@ -288,6 +300,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `FeedbackResponse` | `status:'processing'|'ready'|'partial'|'failed'`, overall 0..100|null, summary|null, scores, emotions, retryable error|null |
 | `AudioAccessResponse` | `status:'processing'|'ready'|'failed'`, `signed_url|null`, `expires_at|null`, audio type; storage path 금지 |
 | `SessionResultSummary` | `id`, `attempt_no`, `status`, `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id|null`, `insufficient_data`, `missing_categories`, `created_at` |
+| `GeneralScore` | `category`, `score`, `max_score:25`, `strength|null`, `suggestion|null`, `evidence|null`. 자유채팅·시나리오 결과의 항목별 점수이며 연습 전체 기준이다. 면접 결과에서는 비어 있고 `interview_evaluation.scores`가 대신 쓰인다 |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
 | `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
 | `InterviewEvaluation` | `status:'succeeded'|'partial'|'failed'`, `overall_score:5..100|null`, summary, scores, `missing_categories` |

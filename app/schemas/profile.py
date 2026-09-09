@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.base import ContractModel
 
@@ -25,6 +25,25 @@ class ProfileReplaceRequest(ContractModel):
         if value > date.today():
             raise ValueError("birth_date cannot be in the future")
         return value
+
+
+class PasswordChangeRequest(ContractModel):
+    """비밀번호 변경. 세션만으로는 바꿀 수 없고 현재 비밀번호를 확인한다."""
+
+    current_password: Annotated[str, StringConstraints(min_length=1)]
+    new_password: Annotated[str, StringConstraints(min_length=8, max_length=72)]
+
+    @model_validator(mode="after")
+    def new_password_must_differ(self) -> "PasswordChangeRequest":
+        if self.current_password == self.new_password:
+            raise ValueError("new_password must differ from current_password")
+        return self
+
+
+class CredentialChangeResponse(ContractModel):
+    """바꾸기가 끝났음을 알린다. 지금은 비밀번호 변경만 이 응답을 쓴다."""
+
+    changed: bool = True
 
 
 class ConsentInput(ContractModel):
