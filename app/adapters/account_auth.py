@@ -20,15 +20,10 @@ class WrongPasswordError(RuntimeError):
     """현재 비밀번호가 틀렸다. 새 비밀번호로 넘어가지 않는다."""
 
 
-class EmailAlreadyUsedError(RuntimeError):
-    """다른 계정이 이미 그 주소를 쓰고 있다."""
-
-
 class AccountAuthGateway(Protocol):
     def reconfirm_user(self, access_token: str, expected_user_id: UUID) -> None: ...
     def delete_user(self, user_id: UUID) -> None: ...
     def get_email(self, access_token: str) -> str: ...
-    def change_email(self, access_token: str, email: str) -> None: ...
     def change_password(
         self, access_token: str, current_password: str, new_password: str
     ) -> None: ...
@@ -87,20 +82,6 @@ class SupabaseAccountAuthGateway:
         if not isinstance(email, str) or not email:
             raise AuthGatewayUnavailable
         return email
-
-    def change_email(self, access_token: str, email: str) -> None:
-        """주소 변경을 요청한다.
-
-        곧바로 바뀌지 않는다. Supabase 가 새 주소로 확인 링크를 보내고, 그
-        링크를 눌러야 확정된다. 확인 없이 바꾸면 오타 하나로 계정에 다시
-        들어올 수 없게 된다.
-        """
-        try:
-            self._update_user(access_token, {"email": email})
-        except HTTPError as error:
-            if error.code in {400, 422}:
-                raise EmailAlreadyUsedError from error
-            raise AuthGatewayUnavailable from error
 
     def change_password(
         self, access_token: str, current_password: str, new_password: str

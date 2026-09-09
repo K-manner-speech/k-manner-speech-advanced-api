@@ -27,24 +27,6 @@ class ProfileReplaceRequest(ContractModel):
         return value
 
 
-# 주소가 진짜 닿는지는 확인 메일이 판정한다. 여기서는 형태만 거른다.
-# 오탈자를 서버까지 보내지 않으려는 것이지 주소를 검증하려는 것이 아니다.
-EmailText = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True,
-        max_length=254,
-        pattern=r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$",
-    ),
-]
-
-
-class EmailChangeRequest(ContractModel):
-    """주소 변경 요청. 확인 메일을 받아야 확정된다."""
-
-    email: EmailText
-
-
 class PasswordChangeRequest(ContractModel):
     """비밀번호 변경. 세션만으로는 바꿀 수 없고 현재 비밀번호를 확인한다."""
 
@@ -59,9 +41,9 @@ class PasswordChangeRequest(ContractModel):
 
 
 class CredentialChangeResponse(ContractModel):
-    """무엇이 끝났고 무엇이 남았는지 화면이 그대로 옮겨 적을 수 있게 한다."""
+    """바꾸기가 끝났음을 알린다. 지금은 비밀번호 변경만 이 응답을 쓴다."""
 
-    pending_email: str | None = None
+    changed: bool = True
 
 
 class ConsentInput(ContractModel):

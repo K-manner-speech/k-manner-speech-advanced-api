@@ -6,22 +6,13 @@ from app.adapters.account_auth import (
     AccountAuthGateway,
     AuthGatewayUnavailable,
     AuthReconfirmationError,
-    EmailAlreadyUsedError,
     WrongPasswordError,
 )
 from app.core.errors import ApiError
-from app.schemas.profile import (
-    CredentialChangeResponse,
-    EmailChangeRequest,
-    PasswordChangeRequest,
-)
+from app.schemas.profile import CredentialChangeResponse, PasswordChangeRequest
 
 
 class CredentialService(Protocol):
-    def change_email(
-        self, access_token: str, request: EmailChangeRequest
-    ) -> CredentialChangeResponse: ...
-
     def change_password(
         self, access_token: str, request: PasswordChangeRequest
     ) -> CredentialChangeResponse: ...
@@ -35,31 +26,6 @@ class SupabaseCredentialService:
 
     def __init__(self, gateway: AccountAuthGateway) -> None:
         self._gateway = gateway
-
-    def change_email(
-        self, access_token: str, request: EmailChangeRequest
-    ) -> CredentialChangeResponse:
-        try:
-            self._gateway.change_email(access_token, request.email)
-        except EmailAlreadyUsedError as error:
-            raise ApiError(
-                409,
-                "EMAIL_ALREADY_USED",
-                "이미 사용 중인 이메일입니다. 다른 주소를 입력해 주세요.",
-            ) from error
-        except AuthReconfirmationError as error:
-            raise ApiError(
-                401, "SESSION_EXPIRED", "다시 로그인한 뒤 시도해 주세요."
-            ) from error
-        except AuthGatewayUnavailable as error:
-            raise ApiError(
-                503,
-                "AUTH_UNAVAILABLE",
-                "인증 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-                retryable=True,
-            ) from error
-        # 아직 바뀌지 않았다. 새 주소로 간 확인 링크를 눌러야 확정된다.
-        return CredentialChangeResponse(pending_email=request.email)
 
     def change_password(
         self, access_token: str, request: PasswordChangeRequest

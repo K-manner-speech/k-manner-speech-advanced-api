@@ -17,7 +17,6 @@ from app.repositories.account import AccountDeletionRepository
 from app.repositories.users import UserRepository
 from app.schemas.profile import (
     CredentialChangeResponse,
-    EmailChangeRequest,
     LanguageReplaceRequest,
     MeResponse,
     PasswordChangeRequest,
@@ -121,24 +120,6 @@ def delete_account(
 ) -> Response:
     service.delete_account(user.id, user.access_token, idempotency_key)
     return Response(status_code=204)
-
-
-@router.put(
-    "/me/email",
-    operation_id="me_email.change",
-    response_model=CredentialChangeResponse,
-)
-def change_email(
-    request: EmailChangeRequest,
-    user: Annotated[AuthenticatedUser, Depends(get_authenticated_user)],
-    service: Annotated[CredentialService, Depends(get_credential_service)],
-) -> CredentialChangeResponse:
-    """주소 변경을 요청한다.
-
-    응답이 200 이어도 아직 바뀌지 않았다. 새 주소로 간 확인 링크를 눌러야
-    확정된다. 확인 없이 바꾸면 오타 하나로 계정에 다시 들어올 수 없다.
-    """
-    return service.change_email(user.access_token, request)
 
 
 @router.put(
