@@ -75,6 +75,7 @@ class HomeRepository:
                     select s.id as scenario_id, s.title, s.goal, s.difficulty,
                            s.estimated_minutes, s.opening_message,
                            p.id as persona_id, p.name as persona_name,
+                           p.avatar_key as persona_avatar_key,
                            ps.relationship_label,
                            (c.scenario_id is not null) as completed_before
                     from public.scenarios s
