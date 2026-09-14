@@ -3,6 +3,7 @@
 import pytest
 
 from app.ai.prompts.composer import PromptComposer
+from worker.domain_adapters import INTERVIEWER_PROMPT_BUNDLE
 
 BUNDLES = ["seojun", "minjun", "seoyeon"]
 
@@ -132,3 +133,21 @@ def test_session_result_keeps_the_goal_judgement() -> None:
 
     assert "success_conditions" in prompt
     assert "대화 전체" in prompt
+
+
+def test_interviewer_borrows_a_real_persona_voice() -> None:
+    """면접관에게도 화자 설정이 있어야 한다.
+
+    면접방에는 personas 행이 없어 번들이 비고, 그러면 TTS 가 기본 음성으로
+    떨어져 면접관이 매번 다른 사람처럼 들린다. 전용 페르소나가 생기기 전까지
+    김민준 팀장의 번들을 빌려 쓴다.
+    """
+    composer = PromptComposer.default()
+
+    assert INTERVIEWER_PROMPT_BUNDLE in BUNDLES
+    voice = composer.voice_for(INTERVIEWER_PROMPT_BUNDLE)
+    assert voice is not None
+    instruction = composer.tts_instruction(INTERVIEWER_PROMPT_BUNDLE, "neutral")
+    # 번들이 없을 때의 지시문에는 화자 설정이 붙지 않는다.
+    assert instruction != composer.tts_instruction(None, "neutral")
+    assert voice.style in instruction

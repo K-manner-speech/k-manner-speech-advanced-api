@@ -371,7 +371,7 @@ k-manner-speech-advanced-front/public/personas/
 
 - 경로는 `/personas/<avatar_key>/<emotion>.png`이며 `personaImage()` 한 곳에서만 만든다. 감정 라벨은 허용 목록으로 좁히고 `avatar_key`는 `^[a-z0-9-]+$`만 받는다.
 - `avatar_key`가 없거나 규칙에 맞지 않으면 `placeholder.svg`를 쓴다. 파일을 불러오지 못해도 같은 자리 표시자로 바꾼다. **다른 페르소나의 얼굴로 대신하지 않는다.** 사용자가 누구와 이야기하는지 잘못 익히기 때문이다.
-- 면접방에는 페르소나 행이 없어 `avatar_key` 가 비어 있다. 지금은 화면이 `test-team-lead` 를 임시로 빌려 쓴다. 전용 면접관 페르소나를 만들면 `INTERVIEWER_AVATAR_KEY` 상수와 그 분기를 함께 지운다.
+- 면접방에는 페르소나 행이 없어 `avatar_key` 가 비어 있다. 지금은 면접관이 김민준 팀장을 그대로 빌려 쓴다. 얼굴은 `INTERVIEWER_AVATAR_KEY`(`test-team-lead`), 이름과 역할은 `INTERVIEWER_NAME`·`INTERVIEWER_ROLE`, 음성은 백엔드의 `INTERVIEWER_PROMPT_BUNDLE`(`minjun`)이 정한다. 얼굴과 목소리가 어긋나면 다른 사람으로 들리므로 네 값은 항상 같은 인물을 가리켜야 한다. 전용 면접관 페르소나를 만들면 네 곳을 함께 지운다.
 - 화면에 담을 때 위를 기준으로 자른다. 대화 화면은 4:3 상자에, 목록·말풍선 아바타는 정사각형에 `object-fit: cover` 와 `object-position: center top` 을 쓴다. 가운데를 기준으로 자르면 4:5 인물 사진의 머리가 잘린다.
 - 목표와 다른 점: 아직 WebP·썸네일·매니페스트를 쓰지 않고 서비스용 PNG 한 벌만 둔다. `test-team-lead`와 `test-customer`는 `480×600px`(4:5)이고 `campus-senior`만 `480×543px`로 어긋난다. 화면은 `object-fit: cover`라 표시에는 문제가 없으나 다음에 이서준 세트를 다시 만들 때 맞춘다.
 - 생성 원본(`1122×1402px`)은 저장소에 넣지 않는다. 저장소 무게를 키우고 서비스가 쓰지 않기 때문이다. 원본은 12절에 따라 생성 담당자가 보관한다.

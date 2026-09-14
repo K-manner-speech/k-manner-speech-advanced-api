@@ -84,6 +84,12 @@ def _insert_job(
     return job_id
 
 
+# 면접관은 아직 personas 행이 없어 방의 prompt_bundle_key 가 비어 있다. 그동안
+# 김민준 팀장의 번들을 빌려 쓴다. 전용 면접관 페르소나가 생기면 이 상수와 쓰는
+# 곳을 함께 지운다. 화면의 INTERVIEWER_AVATAR_KEY 와 같은 인물이어야 한다.
+INTERVIEWER_PROMPT_BUNDLE = "minjun"
+
+
 class ConversationAdapter:
     job_type = JobType.CONVERSATION_TEXT
 
@@ -1156,7 +1162,7 @@ class TTSAdapter:
                 text(
                     """
                     select a.id, a.processing_token, a.storage_path, m.content,
-                           m.persona_emotion, p.prompt_bundle_key
+                           m.persona_emotion, p.prompt_bundle_key, r.practice_type
                     from public.message_audio a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -1178,9 +1184,13 @@ class TTSAdapter:
             "emotion": row["persona_emotion"] or "neutral",
             "storage_path": row["storage_path"],
         }
-        # 음성은 페르소나 번들이 정한다. 번들이 없으면 executor 기본값을 쓴다.
-        if row["prompt_bundle_key"]:
-            payload["prompt_bundle"] = row["prompt_bundle_key"]
+        # 음성은 페르소나 번들이 정한다. 면접방에는 페르소나가 없어 면접관 번들을
+        # 빌려 쓰고, 그 밖에 번들이 없으면 executor 기본값을 쓴다.
+        bundle = row["prompt_bundle_key"] or (
+            INTERVIEWER_PROMPT_BUNDLE if row["practice_type"] == "interview" else None
+        )
+        if bundle:
+            payload["prompt_bundle"] = bundle
         return TargetClaim(
             target_id,
             row["processing_token"],
