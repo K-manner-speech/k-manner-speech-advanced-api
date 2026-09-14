@@ -52,6 +52,19 @@ JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`
 조회가 포함됩니다. Worker는 여덟 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
 처리합니다. 회원 탈퇴는 private Storage user-prefix object, Job/queue, DB/vector와 Supabase Auth 사용자를 즉시 영구 삭제하며 완료 뒤 멱등 snapshot을 보존하지 않습니다.
 
+## v1.2.2 결과·피드백 구조
+
+면접 결과에는 역할이 다른 전체 총평과 항목별 보완점 요약이 함께 있습니다.
+
+- `session_results.summary`: 면접 전체 총평. API에서는 `interview_evaluation.summary`로 반환
+- `interview_evaluation_scores.improvement_summary`: 접힌 보완점 카드용 45자 이내 항목별 요약. API에서는 `interview_evaluation.scores[].summary`로 반환
+- `interview_evaluation_scores.suggestion_text`: 펼친 카드의 상세 개선 제안. API에서는 `interview_evaluation.scores[].suggestion`으로 반환
+- `interview_evaluation_scores.evidence_text`: 평가 근거가 된 실제 답변. API에서는 `interview_evaluation.scores[].evidence`로 반환
+
+전체 총평과 항목별 요약은 API에서 모두 `summary`라는 이름을 사용하지만 JSON 경로와 생성 목적이 다르며 서로 대체하지 않습니다. 자유채팅·상황 시나리오 결과의 접힌 카드 요약은 별도 점수 테이블이 아니라 `result_items.title`을 사용합니다.
+
+배포 전에는 `supabase/migrations/20260914142000_add_interview_improvement_summary.sql`을 포함한 최신 migration을 순서대로 적용해야 합니다. 프롬프트, `app/ai/schemas.py` 또는 결과 저장 로직을 변경한 배포에서는 API뿐 아니라 `evaluation_ai` worker도 새 코드로 다시 시작해야 합니다.
+
 ## 로컬 면접 시연
 
 원격 Supabase schema에 `supabase/migrations/*.sql`을 순서대로 적용하고, `.env`에
