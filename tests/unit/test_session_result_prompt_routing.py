@@ -7,7 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai.interfaces import AIProviderError
-from app.ai.schemas import GeneralSessionResultOutput, InterviewSessionResultOutput
+from app.ai.schemas import (
+    GeneralSessionResultOutput,
+    InterviewEvaluationScore,
+    InterviewSessionResultOutput,
+    SessionResultOutput,
+)
 from app.schemas.common import JobType
 from worker.executors import WorkerExecutors
 from worker.queue import ClaimedJob
@@ -158,3 +163,27 @@ def test_general_and_interview_output_contracts_reject_cross_type_fields() -> No
         InterviewSessionResultOutput.model_validate(
             {"summary": "면접 결과", "short_summary": "한 줄", "items": []}
         )
+
+
+def test_result_contract_compacts_overlong_summaries_before_storage() -> None:
+    result = SessionResultOutput.model_validate(
+        {
+            "summary": "첫 번째 핵심 총평입니다. " + "세부 기술 사례를 반복합니다. " * 20,
+            "short_summary": "한 줄",
+            "items": [],
+        }
+    )
+    score = InterviewEvaluationScore.model_validate(
+        {
+            "category": "answer_structure",
+            "score": 8,
+            "strength": None,
+            "summary": "처리 과정과 검증 결과에 대한 설명이 부족합니다. 다음 문장은 상세 제안이므로 카드 요약에 나오면 안 됩니다.",
+            "suggestion": "원인, 행동, 결과와 검증 순서로 답변하세요.",
+            "evidence": "바로 종료합니다",
+        }
+    )
+
+    assert result.summary is not None and len(result.summary) <= 180
+    assert score.summary is not None and len(score.summary) <= 45
+    assert "다음 문장" not in score.summary

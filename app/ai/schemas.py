@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field, StrictInt, model_validator
+from pydantic import Field, StrictInt, field_validator, model_validator
 
 from app.schemas.base import ContractModel
+
+
+def _compact_text(value: str | None, limit: int) -> str | None:
+    if value is None or len(value) <= limit:
+        return value
+    sentences = re.findall(r"[^.!?。！？]+[.!?。！？]?", value.strip())
+    selected: list[str] = []
+    for sentence in sentences:
+        candidate = " ".join([*selected, sentence.strip()])
+        if len(candidate) > limit:
+            break
+        selected.append(sentence.strip())
+    if selected:
+        return " ".join(selected)
+    return f"{value[: limit - 1].rstrip()}…"
 
 EmotionLabel = Literal[
     "neutral",
@@ -167,9 +183,19 @@ class InterviewEvaluationScore(ContractModel):
     suggestion: str | None = Field(
         description="4점 또는 8점이면 반드시 작성하는 구체적인 보완 방법"
     )
+    summary: str | None = Field(
+        default=None,
+        max_length=45,
+        description="접힌 개선 카드에 표시할 45자 이내의 짧은 보완점 요약",
+    )
     evidence: str | None = Field(
         description="판단 근거가 된 실제 사용자 발화의 짧은 인용"
     )
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def compact_summary(cls, value: str | None) -> str | None:
+        return _compact_text(value, 45)
 
 
 class InterviewEvaluation(ContractModel):
@@ -246,12 +272,17 @@ class InterviewEvaluation(ContractModel):
 
 
 class SessionResultOutput(ContractModel):
-    summary: str | None
+    summary: str | None = Field(max_length=180)
     # 목록 카드는 두 줄까지만 보여 준다. 긴 요약을 잘라 쓰면 문장이 끊겨
     # 무슨 말인지 알 수 없으므로 짧은 문장을 따로 받는다. 화면 폭 기준으로
     # 두 줄이 45자쯤이라 조금 넘쳐도 버리지 않도록 60자까지 받는다.
     short_summary: str | None = Field(max_length=60)
     items: list[ResultItemOutput]
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def compact_summary(cls, value: str | None) -> str | None:
+        return _compact_text(value, 180)
 
 
 class GeneralSessionResultOutput(SessionResultOutput):

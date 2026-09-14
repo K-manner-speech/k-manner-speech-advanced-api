@@ -151,3 +151,15 @@ def test_interviewer_borrows_a_real_persona_voice() -> None:
     # 번들이 없을 때의 지시문에는 화자 설정이 붙지 않는다.
     assert instruction != composer.tts_instruction(None, "neutral")
     assert voice.style in instruction
+
+
+def test_session_result_summaries_do_not_repeat_detail_cards() -> None:
+    composer = PromptComposer.default()
+    for task_id in (
+        "session_result_free_chat",
+        "session_result_scenario",
+        "session_result_interview",
+    ):
+        prompt = composer.task_instruction(task_id)
+        assert "3문장 이내, 180자 이내" in prompt
+        assert "구체적인 근거와 개선 방법은 항목별 카드에서만 설명" in prompt

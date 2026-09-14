@@ -240,13 +240,14 @@ class ResultRepository:
                 self._session.execute(
                     text(
                         """
-                        select category, score, 20 as max_score,
-                               strength_text as strength,
-                               suggestion_text as suggestion,
-                               evidence_text as evidence
-                        from public.interview_evaluation_scores
-                        where result_id = :result_id
-                        order by category
+                        select ies.category, ies.score, 20 as max_score,
+                               ies.strength_text as strength,
+                               ies.suggestion_text as suggestion,
+                               to_jsonb(ies)->>'improvement_summary' as summary,
+                               ies.evidence_text as evidence
+                        from public.interview_evaluation_scores ies
+                        where ies.result_id = :result_id
+                        order by ies.category
                         """
                     ),
                     {"result_id": result["id"]},

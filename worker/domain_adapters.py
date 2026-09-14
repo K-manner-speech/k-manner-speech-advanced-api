@@ -1743,9 +1743,9 @@ class SessionResultAdapter:
                         """
                         insert into public.interview_evaluation_scores
                             (result_id, category, score, strength_text,
-                             suggestion_text, evidence_text)
+                             suggestion_text, improvement_summary, evidence_text)
                         values (:result_id, :category, :score, :strength,
-                                :suggestion, :evidence)
+                                :suggestion, :summary, :evidence)
                         """
                     ),
                     {"result_id": item.target_id, **score.model_dump()},

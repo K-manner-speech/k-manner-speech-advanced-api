@@ -24,6 +24,7 @@ class InterviewEvaluationScoreResponse(ContractModel):
     max_score: Literal[20]
     strength: str | None
     suggestion: str | None
+    summary: str | None = None
     evidence: str | None
 
 
