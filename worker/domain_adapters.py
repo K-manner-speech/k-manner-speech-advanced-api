@@ -17,6 +17,7 @@ from app.ai.interfaces import AIProviderError
 from app.ai.schemas import (
     EmotionAnalysis,
     GeneralFeedback,
+    GeneralSessionResultOutput,
     InterviewEvaluation,
     ScenarioGoalProgress,
 )
@@ -81,6 +82,12 @@ def _insert_job(
         },
     )
     return job_id
+
+
+# 면접관은 아직 personas 행이 없어 방의 prompt_bundle_key 가 비어 있다. 그동안
+# 김민준 팀장의 번들을 빌려 쓴다. 전용 면접관 페르소나가 생기면 이 상수와 쓰는
+# 곳을 함께 지운다. 화면의 INTERVIEWER_AVATAR_KEY 와 같은 인물이어야 한다.
+INTERVIEWER_PROMPT_BUNDLE = "minjun"
 
 
 class ConversationAdapter:
@@ -1155,7 +1162,7 @@ class TTSAdapter:
                 text(
                     """
                     select a.id, a.processing_token, a.storage_path, m.content,
-                           m.persona_emotion, p.prompt_bundle_key
+                           m.persona_emotion, p.prompt_bundle_key, r.practice_type
                     from public.message_audio a
                     join public.room_messages m on m.id = a.message_id
                     join public.practice_rooms r on r.id = m.room_id
@@ -1177,9 +1184,13 @@ class TTSAdapter:
             "emotion": row["persona_emotion"] or "neutral",
             "storage_path": row["storage_path"],
         }
-        # 음성은 페르소나 번들이 정한다. 번들이 없으면 executor 기본값을 쓴다.
-        if row["prompt_bundle_key"]:
-            payload["prompt_bundle"] = row["prompt_bundle_key"]
+        # 음성은 페르소나 번들이 정한다. 면접방에는 페르소나가 없어 면접관 번들을
+        # 빌려 쓰고, 그 밖에 번들이 없으면 executor 기본값을 쓴다.
+        bundle = row["prompt_bundle_key"] or (
+            INTERVIEWER_PROMPT_BUNDLE if row["practice_type"] == "interview" else None
+        )
+        if bundle:
+            payload["prompt_bundle"] = bundle
         return TargetClaim(
             target_id,
             row["processing_token"],
@@ -1690,6 +1701,40 @@ class SessionResultAdapter:
                     **result_item.model_dump(exclude={"source_document_id"}),
                 },
             )
+        # 일반 결과의 항목별 점수. 면접은 아래 interview_evaluation_scores 를 쓴다.
+        session.execute(
+            text(
+                "delete from public.general_evaluation_scores where result_id = :result_id"
+            ),
+            {"result_id": item.target_id},
+        )
+        general_result = output.result
+        general_scores = (
+            general_result.scores
+            if isinstance(general_result, GeneralSessionResultOutput)
+            else []
+        )
+        for general_score in general_scores:
+            session.execute(
+                text(
+                    """
+                    insert into public.general_evaluation_scores
+                        (result_id, category, score, strength_text,
+                         suggestion_text, evidence_text)
+                    values (:result_id, :category, :score, :strength,
+                            :suggestion, :evidence)
+                    """
+                ),
+                {
+                    "result_id": item.target_id,
+                    "category": general_score.category,
+                    "score": general_score.score,
+                    "strength": general_score.strength,
+                    "suggestion": general_score.suggestion,
+                    "evidence": general_score.original_text,
+                },
+            )
+
         evaluation: InterviewEvaluation | None = output.interview_evaluation
         if evaluation is not None:
             for score in evaluation.scores:
@@ -1698,9 +1743,9 @@ class SessionResultAdapter:
                         """
                         insert into public.interview_evaluation_scores
                             (result_id, category, score, strength_text,
-                             suggestion_text, evidence_text)
+                             suggestion_text, improvement_summary, evidence_text)
                         values (:result_id, :category, :score, :strength,
-                                :suggestion, :evidence)
+                                :suggestion, :summary, :evidence)
                         """
                     ),
                     {"result_id": item.target_id, **score.model_dump()},
@@ -1717,7 +1762,8 @@ class SessionResultAdapter:
                 """
                 update public.session_results
                 set result_status = :status, overall_score = :overall,
-                    summary = :summary, missing_categories = :missing,
+                    summary = :summary, short_summary = :short_summary,
+                    missing_categories = :missing,
                     updated_at = now()
                 where id = :result_id and user_id = :user_id
                   and result_status = 'processing'
@@ -1729,6 +1775,7 @@ class SessionResultAdapter:
                 "status": status,
                 "overall": overall,
                 "summary": output.result.summary,
+                "short_summary": output.result.short_summary,
                 "missing": missing,
             },
         )

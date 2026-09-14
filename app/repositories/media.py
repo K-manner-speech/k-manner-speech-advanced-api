@@ -58,7 +58,41 @@ class MediaRepository:
             .one_or_none()
         )
         if target is None:
-            return None
+            message = (
+                self._session.execute(
+                    text("""
+                        select m.id, m.room_id
+                        from public.room_messages m
+                        join public.practice_rooms r on r.id = m.room_id
+                        where m.id = :message_id and r.user_id = :user_id
+                          and m.sender_type = 'persona'
+                    """),
+                    {"message_id": message_id, "user_id": user_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if message is None:
+                return None
+            target_id = self._session.execute(
+                text("""
+                    insert into public.message_audio
+                        (message_id, audio_type, storage_path, generation_status, deadline_at)
+                    values (:message_id, 'persona_tts', :storage_path, 'processing', :deadline_at)
+                    returning id
+                """),
+                {
+                    "message_id": message_id,
+                    "storage_path": f"{user_id}/{message['room_id']}/{message_id}.wav",
+                    "deadline_at": datetime.now(UTC) + timedelta(seconds=deadline_seconds),
+                },
+            ).scalar_one()
+            job = self._jobs.insert_job(
+                user_id, "tts_generation", "message_audio_id", target_id, deadline_seconds
+            )
+            self._jobs.enqueue(get_job_queue_name("tts_generation"), job["id"], user_id)
+            self._session.commit()
+            return target_id, job
         if target["generation_status"] != "failed":
             raise RuntimeError("audio is not retryable")
         active = self._session.execute(

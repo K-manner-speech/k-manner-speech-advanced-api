@@ -60,6 +60,7 @@ def test_interview_evaluation_recovers_duplicate_category_as_partial() -> None:
                 score=16,
                 strength="구조가 명확합니다.",
                 suggestion=None,
+                summary=None,
                 evidence="결론부터 설명했습니다.",
             ),
             InterviewEvaluationScore(
@@ -67,6 +68,7 @@ def test_interview_evaluation_recovers_duplicate_category_as_partial() -> None:
                 score=8,
                 strength=None,
                 suggestion="근거를 보완하세요.",
+                summary=None,
                 evidence="설명이 짧았습니다.",
             ),
         ],
@@ -89,6 +91,7 @@ def test_interview_evaluation_does_not_expose_average_answer_as_strength() -> No
                 score=12,
                 strength="모르는 내용을 솔직하게 인정했습니다.",
                 suggestion="확인 방법을 함께 설명하세요.",
+                summary=None,
                 evidence="잘 모르겠습니다. 없습니다.",
             )
         ],

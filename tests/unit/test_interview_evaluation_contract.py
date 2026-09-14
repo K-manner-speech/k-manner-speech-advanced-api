@@ -17,6 +17,7 @@ def score(category: str, value: int) -> InterviewEvaluationScore:
         score=value,
         strength="구체적인 근거를 제시했습니다.",
         suggestion="결과를 수치로 연결해 보세요.",
+        summary=None,
         evidence="답변에 나온 근거",
     )
 
@@ -62,6 +63,7 @@ def test_interview_score_rejects_values_outside_behavior_anchors(
             score=invalid_score,
             strength=None,
             suggestion=None,
+            summary=None,
             evidence=None,
         )
 

@@ -7,7 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai.interfaces import AIProviderError
-from app.ai.schemas import GeneralSessionResultOutput, InterviewSessionResultOutput
+from app.ai.schemas import (
+    GeneralSessionResultOutput,
+    InterviewEvaluationScore,
+    InterviewSessionResultOutput,
+    SessionResultOutput,
+)
 from app.schemas.common import JobType
 from worker.executors import WorkerExecutors
 from worker.queue import ClaimedJob
@@ -21,7 +26,7 @@ class _ResultProvider:
         self.calls.append(kwargs)
         result_type = kwargs["result_type"]
         assert isinstance(result_type, type)
-        payload: dict[str, object] = {"summary": "요약", "items": []}
+        payload: dict[str, object] = {"summary": "요약", "short_summary": "한 줄 요약", "items": []}
         if result_type.__name__ == "InterviewSessionResultOutput":
             payload["interview_scores"] = [
                 {
@@ -29,6 +34,7 @@ class _ResultProvider:
                     "score": 12,
                     "strength": None,
                     "suggestion": None,
+                    "summary": None,
                     "evidence": "답변 근거",
                 }
                 for category in (
@@ -38,6 +44,19 @@ class _ResultProvider:
                     "job_fit_problem_solving",
                     "delivery_attitude",
                 )
+            ]
+        else:
+            # 일반 결과는 네 항목 점수를 함께 낸다.
+            payload["scores"] = [
+                {
+                    "category": category,
+                    "score": 20,
+                    "strength": "정중하게 표현했어요.",
+                    "suggestion": None,
+                    "original_text": "부탁드립니다.",
+                    "recommended_text": None,
+                }
+                for category in ("honorifics", "courtesy", "context_fit", "naturalness")
             ]
         return result_type.model_validate(payload)
 
@@ -133,10 +152,42 @@ def test_type_specific_prompts_do_not_mix_evaluation_domains() -> None:
 def test_general_and_interview_output_contracts_reject_cross_type_fields() -> None:
     with pytest.raises(ValidationError):
         GeneralSessionResultOutput.model_validate(
-            {"summary": "일반 결과", "items": [], "interview_scores": []}
+            {
+                "summary": "일반 결과",
+                "short_summary": "한 줄",
+                "items": [],
+                "interview_scores": [],
+            }
         )
 
     with pytest.raises(ValidationError):
         InterviewSessionResultOutput.model_validate(
-            {"summary": "면접 결과", "items": []}
+            {"summary": "면접 결과", "short_summary": "한 줄", "items": []}
         )
+
+
+def test_result_contract_compacts_overlong_summaries_before_storage() -> None:
+    result = SessionResultOutput.model_validate(
+        {
+            "summary": "첫 번째 핵심 총평입니다. " + "세부 기술 사례를 반복합니다. " * 20,
+            "short_summary": "한 줄",
+            "items": [],
+        }
+    )
+    score = InterviewEvaluationScore.model_validate(
+        {
+            "category": "answer_structure",
+            "score": 8,
+            "strength": None,
+            "summary": (
+                "처리 과정과 검증 결과에 대한 설명이 부족합니다. "
+                "다음 문장은 상세 제안이므로 카드 요약에 나오면 안 됩니다."
+            ),
+            "suggestion": "원인, 행동, 결과와 검증 순서로 답변하세요.",
+            "evidence": "바로 종료합니다",
+        }
+    )
+
+    assert result.summary is not None and len(result.summary) <= 180
+    assert score.summary is not None and len(score.summary) <= 45
+    assert "다음 문장" not in score.summary

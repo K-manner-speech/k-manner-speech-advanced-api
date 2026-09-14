@@ -15,7 +15,17 @@ from app.core.config import AppSettings
 from app.core.dependencies import ApplicationReadinessChecker
 from app.core.errors import install_error_handlers
 from app.core.readiness import ReadinessChecker
-from app.routers import catalog, conversation, feedback, health, interviews, media, results, users
+from app.routers import (
+    catalog,
+    conversation,
+    feedback,
+    health,
+    home,
+    interviews,
+    media,
+    results,
+    users,
+)
 
 
 def create_app(
@@ -37,6 +47,7 @@ def create_app(
     application.include_router(health.router, prefix="/api/v1")
     application.include_router(users.router, prefix="/api/v1")
     application.include_router(catalog.router, prefix="/api/v1")
+    application.include_router(home.router, prefix="/api/v1")
     application.include_router(conversation.router, prefix="/api/v1")
     application.include_router(feedback.router, prefix="/api/v1")
     application.include_router(media.router, prefix="/api/v1")
