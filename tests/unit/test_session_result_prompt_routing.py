@@ -34,6 +34,7 @@ class _ResultProvider:
                     "score": 12,
                     "strength": None,
                     "suggestion": None,
+                    "summary": None,
                     "evidence": "답변 근거",
                 }
                 for category in (
@@ -178,7 +179,10 @@ def test_result_contract_compacts_overlong_summaries_before_storage() -> None:
             "category": "answer_structure",
             "score": 8,
             "strength": None,
-            "summary": "처리 과정과 검증 결과에 대한 설명이 부족합니다. 다음 문장은 상세 제안이므로 카드 요약에 나오면 안 됩니다.",
+            "summary": (
+                "처리 과정과 검증 결과에 대한 설명이 부족합니다. "
+                "다음 문장은 상세 제안이므로 카드 요약에 나오면 안 됩니다."
+            ),
             "suggestion": "원인, 행동, 결과와 검증 순서로 답변하세요.",
             "evidence": "바로 종료합니다",
         }

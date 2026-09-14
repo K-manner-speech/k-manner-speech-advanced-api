@@ -183,8 +183,9 @@ class InterviewEvaluationScore(ContractModel):
     suggestion: str | None = Field(
         description="4점 또는 8점이면 반드시 작성하는 구체적인 보완 방법"
     )
+    # 기본값을 주면 OpenAI 구조화 출력의 required 에서 빠져 요청 자체가 400 으로
+    # 거부된다. nullable 이 필요하면 기본값 없이 `X | None` 으로만 둔다.
     summary: str | None = Field(
-        default=None,
         max_length=45,
         description="접힌 개선 카드에 표시할 45자 이내의 짧은 보완점 요약",
     )
