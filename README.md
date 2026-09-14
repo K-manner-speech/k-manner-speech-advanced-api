@@ -83,6 +83,17 @@ $env:UV_CACHE_DIR='.uv-cache'
 uv run python -m worker.document_analysis
 ```
 
+Worker 는 코드를 다시 읽지 않습니다. API 는 `--reload` 로 뜨지만 worker 는 시작할 때 읽은
+코드로 끝까지 돕니다. 프롬프트(`app/ai/prompts`), AI 계약(`app/ai/schemas.py`), `worker/` 를
+고쳤다면 해당 worker 를 종료하고 다시 띄워야 반영됩니다. 옛 worker 가 살아 있으면 새 worker 와
+같은 queue 를 함께 잡아 결과가 번갈아 나오므로, 다시 띄우기 전에 남아 있는 프로세스가 없는지
+확인합니다.
+
+```bash
+for w in conversation_text interactive_ai evaluation_ai document_analysis; do pkill -f "worker.$w"; done
+ps -eo pid,command | grep "[w]orker\."   # 아무것도 남지 않아야 합니다
+```
+
 Worker 실행 전 `.env`에는 `WORKER_VISIBILITY_TIMEOUT_SECONDS`를 포함한 필수 설정과 기능별
 Provider model ID가 모두 있어야 합니다. embedding model은 DB의 `vector(3072)` 계약과 맞는
 `text-embedding-3-large`만 허용합니다.

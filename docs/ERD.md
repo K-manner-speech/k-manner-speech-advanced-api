@@ -67,6 +67,7 @@ erDiagram
 
     PERSONAS {
         uuid id PK
+        text avatar_key
         text prompt_bundle_key
     }
 
@@ -80,6 +81,7 @@ erDiagram
         uuid scenario_id PK,FK
         text relationship_label
         text role_key
+        integer sort_order
     }
 
     SCENARIO_SUCCESS_CONDITIONS {
@@ -212,7 +214,9 @@ erDiagram
 - `profiles.onboarding_completed = true`이면 이름, 생년월일, 성별, 모국어, UI 언어와 모든 활성 필수 동의가 유효해야 한다.
 - `daily_attendances`는 사용자가 `출석하기`를 누른 날짜를 담는다. `(user_id, attended_on)`이 기본키라 하루에 한 행만 남고, 재요청이 결과를 바꾸지 않는다. `attended_on`은 `Asia/Seoul` 기준 날짜이며 서버가 계산한다. 연속 일수와 최근 7일 집계는 저장하지 않고 이 표에서 계산한다.
 - `persona_scenarios`는 페르소나와 시나리오의 허용 조합 및 관계 라벨을 보관하는 연결 테이블이다.
+- `personas.avatar_key` 는 화면이 페르소나 이미지를 찾는 폴더 이름이다(`campus-senior`, `test-team-lead`, `test-customer`). 이름을 경로로 바꾸지 않으며, 값이 없거나 폴더가 없으면 화면은 다른 인물의 얼굴 대신 자리 표시자를 쓴다.
 - 프롬프트 본문은 DB 에 두지 않는다. `personas.prompt_bundle_key`와 `persona_scenarios.role_key`는 `app/ai/prompts/catalog` 아래 YAML 조각의 확장자 없는 파일명이며, 두 컬럼 모두 `^[a-z0-9_-]+$` CHECK 로 경로 조작을 막는다. 정체성·말투·음성은 `bundles/personas/<prompt_bundle_key>.yaml`이 단일 출처이고, `personas.description`은 프론트 카드 표시용으로만 남는다.
+- `persona_scenarios.sort_order` 는 한 시나리오에 상대가 둘 이상일 때 누구를 먼저 권할지 정한다. 작을수록 먼저이고 비어 있으면 `personas.sort_order` 를 따른다. `고객 불만 응대` 에는 고객과 담당자가 함께 등록돼 있는데 사용자가 상담원이므로 상대는 고객이어야 한다. 조합을 지우지 않고 순서로 정하는 이유는 이미 그 조합으로 진행 중인 방이 있기 때문이다.
 - 역할을 페르소나 번들이 아니라 조합 행에 두는 이유는 같은 페르소나가 시나리오마다 다른 역할이기 때문이다. 김민준 팀장은 한 시나리오에서는 상사(`supervisor`)이고 다른 시나리오에서는 함께 대응하는 담당자(`colleague`)다. `relationship_label`은 카탈로그 API 가 노출하는 표시용 명사로 계속 남는다.
 - `user_consents.consent_type/policy_version`과 `consent_policies`의 동일 값은 onboarding trigger가 검사하는 논리 연결이다. 실제 DB에는 두 테이블 사이 FK가 없으므로 관계선으로 표현하지 않는다.
 - 시나리오 방은 `max_turns > 0`이고 하나 이상의 필수 성공 조건이 있어야 `in_progress`로 시작할 수 있다.
@@ -343,6 +347,7 @@ erDiagram
         text interview_outcome
         numeric overall_score
         text summary
+        text short_summary
         timestamptz created_at
         timestamptz updated_at
     }
@@ -461,6 +466,7 @@ erDiagram
 - 결과는 방 종료 당시의 `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id`를 복제한다. Worker는 cutoff 이하의 메시지와 완료된 분석만 평가한다.
 - 평가 가능한 사용자 발화가 없으면 결과 row는 생성하되 `insufficient_data = true`, `overall_score = NULL`로 저장한다. 사용자 종료 자체는 감점 사유가 아니다.
 - `general_evaluation_scores`는 자유채팅·시나리오 결과의 항목별 점수다. `(result_id, category)`가 유일하며 결과 하나에 항목당 한 행이다. 면접의 `interview_evaluation_scores`와 같은 모양이고, 한 결과가 둘 다 갖지는 않는다. 각 점수는 5~25 정수이며, 턴별 점수의 평균이 아니라 결과 생성 AI 가 연습 전체를 보고 다시 매긴 값이다.
+- `session_results` 에는 요약이 두 개다. `summary` 는 판단 근거를 설명하는 문단이고 상세 화면이, `short_summary` 는 60자 CHECK 가 걸린 한 문장이고 목록 카드가 쓴다. 목록은 훑는 화면이고 상세는 읽는 화면이라 필요한 길이가 다르며, 긴 요약을 잘라 쓰면 문장이 끊긴다. 두 문장은 한 번의 AI 응답에서 함께 받는다. 컬럼이 생기기 전 결과에는 `short_summary` 가 없다.
 - `session_results.user_id`가 결과의 최종 owner이며 `result_items`는 부모 결과의 owner를 따른다.
 - `result_items.source_document_id`는 면접 문서를 선택적으로 참조해 결과 근거의 출처를 보존한다.
 - 면접 평가 category는 `question_understanding_fit`, `answer_structure`, `specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude` 다섯 개로 고정하며 각 점수는 1~20 정수다. `(result_id, category)`는 unique다.
