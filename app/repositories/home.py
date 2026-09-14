@@ -33,6 +33,9 @@ class HomeRepository:
             {"user_id": user_id, "zone": LOCAL_TIMEZONE},
         )
 
+    def commit(self) -> None:
+        self._session.commit()
+
     def attendance_dates(self, user_id: UUID, days: int) -> list[Any]:
         """최근 며칠간 출석한 날짜를 최신순으로 돌려준다.
 
