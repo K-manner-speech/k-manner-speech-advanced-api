@@ -61,6 +61,8 @@ class RoomSummary(Room):
 class RoomDetail(Room):
     goal: str | None
     persona_name: str | None
+    # 화면이 페르소나 이미지를 고르는 키다. 이름을 경로로 바꾸지 않는다.
+    persona_avatar_key: str | None = None
     interview_configuration_id: UUID | None = None
     current_interview_question_id: UUID | None = None
 

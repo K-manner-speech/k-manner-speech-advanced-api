@@ -62,5 +62,8 @@ class SqlHomeService:
         )
 
     def attend(self, user_id: UUID) -> HomeSummary:
+        # 커밋하지 않으면 같은 트랜잭션에서 읽는 summary 만 출석을 본다. 응답은
+        # 성공처럼 보이고 다음 조회에서 되돌아가므로, 기록 직후에 확정한다.
         self._repository.mark_attendance(user_id)
+        self._repository.commit()
         return self.summary(user_id)

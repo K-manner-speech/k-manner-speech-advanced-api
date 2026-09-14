@@ -117,7 +117,8 @@ class CatalogRepository:
                 from public.persona_scenarios ps
                 join public.personas p on p.id = ps.persona_id and p.is_active = true
                 where ps.scenario_id = :scenario_id
-                order by p.sort_order, p.id
+                -- 시나리오가 정한 순서를 먼저 따른다. 화면은 첫 상대를 기본으로 쓴다.
+                order by coalesce(ps.sort_order, 100), p.sort_order, p.id
                 """
             ),
             {"scenario_id": scenario_id},

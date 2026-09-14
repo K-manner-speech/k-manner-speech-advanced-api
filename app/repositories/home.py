@@ -33,6 +33,9 @@ class HomeRepository:
             {"user_id": user_id, "zone": LOCAL_TIMEZONE},
         )
 
+    def commit(self) -> None:
+        self._session.commit()
+
     def attendance_dates(self, user_id: UUID, days: int) -> list[Any]:
         """최근 며칠간 출석한 날짜를 최신순으로 돌려준다.
 
@@ -72,6 +75,7 @@ class HomeRepository:
                     select s.id as scenario_id, s.title, s.goal, s.difficulty,
                            s.estimated_minutes, s.opening_message,
                            p.id as persona_id, p.name as persona_name,
+                           p.avatar_key as persona_avatar_key,
                            ps.relationship_label,
                            (c.scenario_id is not null) as completed_before
                     from public.scenarios s

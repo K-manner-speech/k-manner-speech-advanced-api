@@ -45,9 +45,18 @@ class FakeRepository:
     def __init__(self, attended: list[date]) -> None:
         self.attended = attended
         self.requested_days = 0
+        self.calls: list[str] = []
 
     def today(self) -> date:
         return TODAY
+
+    def mark_attendance(self, user_id: object) -> None:
+        self.calls.append("mark")
+        if TODAY not in self.attended:
+            self.attended.append(TODAY)
+
+    def commit(self) -> None:
+        self.calls.append("commit")
 
     def attendance_dates(self, user_id: object, days: int) -> list[date]:
         self.requested_days = days
@@ -74,3 +83,27 @@ def test_recent_days_counts_only_the_last_seven_days() -> None:
 
     assert summary.streak.recent_days == 2
     assert summary.streak.streak_days == 2
+
+
+def test_attendance_is_committed_before_the_request_ends() -> None:
+    """커밋하지 않으면 응답만 출석으로 보이고 다음 조회에서 되돌아간다.
+
+    세션은 요청이 끝날 때 커밋 없이 닫히므로, 기록만 하고 확정하지 않으면
+    같은 트랜잭션에서 읽는 이 응답에는 출석이 보이지만 DB 에는 남지 않는다.
+    """
+    repository = FakeRepository([])
+    summary = SqlHomeService(cast(HomeRepository, repository)).attend(uuid4())
+
+    assert repository.calls == ["mark", "commit"]
+    assert summary.streak.attended_today is True
+    assert summary.streak.streak_days == 1
+
+
+def test_attending_twice_on_the_same_day_stays_one_day() -> None:
+    repository = FakeRepository([])
+    service = SqlHomeService(cast(HomeRepository, repository))
+    service.attend(uuid4())
+    summary = service.attend(uuid4())
+
+    assert summary.streak.streak_days == 1
+    assert repository.calls == ["mark", "commit", "mark", "commit"]

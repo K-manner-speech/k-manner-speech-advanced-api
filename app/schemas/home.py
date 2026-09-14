@@ -40,6 +40,7 @@ class RecommendedPractice(ContractModel):
     estimated_minutes: int | None
     persona_id: UUID | None
     persona_name: str | None
+    persona_avatar_key: str | None = None
     relationship_label: str | None
     opening_message: str | None
     completed_before: bool

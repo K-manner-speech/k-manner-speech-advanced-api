@@ -168,6 +168,7 @@ class ConversationRepository:
                 select r.id, r.title, r.practice_type, r.persona_id, r.scenario_id, r.status,
                        r.turn_count, r.ended_reason, r.started_at, r.completed_at, r.updated_at,
                        r.goal_snapshot as goal, p.name as persona_name,
+                       p.avatar_key as persona_avatar_key,
                        r.interview_configuration_id,
                        case when r.practice_type = 'interview' then (
                          select q.id

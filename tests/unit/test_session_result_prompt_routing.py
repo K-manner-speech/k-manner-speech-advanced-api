@@ -21,7 +21,7 @@ class _ResultProvider:
         self.calls.append(kwargs)
         result_type = kwargs["result_type"]
         assert isinstance(result_type, type)
-        payload: dict[str, object] = {"summary": "요약", "items": []}
+        payload: dict[str, object] = {"summary": "요약", "short_summary": "한 줄 요약", "items": []}
         if result_type.__name__ == "InterviewSessionResultOutput":
             payload["interview_scores"] = [
                 {
@@ -146,10 +146,15 @@ def test_type_specific_prompts_do_not_mix_evaluation_domains() -> None:
 def test_general_and_interview_output_contracts_reject_cross_type_fields() -> None:
     with pytest.raises(ValidationError):
         GeneralSessionResultOutput.model_validate(
-            {"summary": "일반 결과", "items": [], "interview_scores": []}
+            {
+                "summary": "일반 결과",
+                "short_summary": "한 줄",
+                "items": [],
+                "interview_scores": [],
+            }
         )
 
     with pytest.raises(ValidationError):
         InterviewSessionResultOutput.model_validate(
-            {"summary": "면접 결과", "items": []}
+            {"summary": "면접 결과", "short_summary": "한 줄", "items": []}
         )

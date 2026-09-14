@@ -47,6 +47,59 @@ lighting: 부드러운 자연광, 중성 색온도
 do_not_change: 얼굴, 머리, 안경, 의상, 배경, 구도, 조명
 ```
 
+## 2-1. 현재 페르소나 정의서
+
+서비스에 있는 페르소나 셋의 확정 정의다. `persona_id`는 `public.personas.avatar_key`와 같아야 한다. 이미지 폴더 이름이 이 값이기 때문이다. 성격·말투는 `app/ai/prompts/catalog/profiles/*.yaml`이 단일 출처이며, 여기에는 이미지에 필요한 외형 정보만 적는다.
+
+`campus-senior`의 정의는 이미 승인되어 서비스에 쓰이고 있는 이미지를 그대로 받아 적은 것이다. 재생성할 때 이 값을 바꾸면 같은 인물로 보이지 않는다.
+
+```yaml
+persona_id: campus-senior
+name: 이서준 선배
+role: 같은 학과 3학년 선배
+relationship: 후배에게 반말로 편하게 말을 거는 가까운 선배
+age_range: 20대 초반
+appearance: 짧은 검은 머리에 자연스러운 앞머리, 갸름한 얼굴, 안경 없음, 옅은 쌍꺼풀
+wardrobe: 네이비 니트 가디건, 흰색 라운드 티셔츠
+background: 낮의 대학 캠퍼스 건물 앞, 흰 콘크리트 외벽과 창, 흐린 초록 나무
+camera: 정면 시선, 상반신, eye-level, 4:5
+lighting: 부드러운 자연광, 중성 색온도
+do_not_change: 얼굴, 머리, 의상, 배경, 구도, 조명
+status: approved
+```
+
+```yaml
+persona_id: test-team-lead
+name: 김민준 팀장
+role: 개발팀을 이끄는 팀장
+relationship: 팀원에게 존댓말로 정중하되 분명하게 업무를 요청하는 상급자
+age_range: 40대
+appearance: 단정하게 빗어 넘긴 짧은 검은 머리, 각진 얼굴, 얇은 검은 뿔테 안경
+wardrobe: 차콜 그레이 셔츠, 단추를 잠근 깃
+background: 밝고 단정한 사무실, 흐린 배경
+camera: 정면 시선, 상반신, eye-level, 4:5
+lighting: 부드러운 실내 조명, 중성 색온도
+do_not_change: 얼굴, 머리, 안경, 의상, 배경, 구도, 조명
+status: approved
+```
+
+```yaml
+persona_id: test-customer
+name: 박서연 고객
+role: 서비스 이용 중 불편을 겪은 고객
+relationship: 존댓말을 쓰지만 불만이 드러나며 구체적 해결을 요구하는 외부 고객
+age_range: 30대
+appearance: 어깨에 닿는 검은 단발, 계란형 얼굴, 안경 없음
+wardrobe: 베이지 블라우스
+background: 밝은 실내 상담 공간, 흐린 배경
+camera: 정면 시선, 상반신, eye-level, 4:5
+lighting: 부드러운 실내 조명, 중성 색온도
+do_not_change: 얼굴, 머리, 의상, 배경, 구도, 조명
+status: approved
+```
+
+세 페르소나 모두 여섯 감정 세트를 갖추었다. `test-team-lead`와 `test-customer`의 정의서는 이 문서에서 먼저 정하고 그대로 생성한 것이며, 실제 이미지는 정의서의 의상·배경을 따르되 세부는 생성 결과를 따랐다. 팀장은 차콜 셔츠에 검은 뿔테 안경, 밝은 사무실 배경이고 고객은 베이지 블라우스에 밝은 실내 배경이다. 승인했으므로 이후 `do_not_change` 항목은 고치지 않는다.
+
 ## 3. 이미지 사양
 
 | 항목 | 기준 |
@@ -300,3 +353,104 @@ type PersonaEmotion =
 - 승인된 원본, 생성 설정, 참조 이미지와 검수 기록을 함께 보관한다.
 - 생성 도구나 모델을 변경하면 기존 세트와 시각적 일관성을 다시 검수한다.
 - 디자인 시스템의 페르소나 규칙이 변경되면 이 문서와 구현 매핑도 함께 갱신한다.
+
+## 13. 구현 현황과 저장소 규칙
+
+7절과 8절은 목표 구조다. 현재 프론트 저장소가 실제로 쓰는 규칙은 다음과 같다.
+
+```text
+k-manner-speech-advanced-front/public/personas/
+  placeholder.svg              이미지가 없는 페르소나의 자리 표시자
+  campus-senior/               폴더 이름 = public.personas.avatar_key
+    neutral.png  happy.png  sad.png  angry.png  curious.png  embarrassment.png
+  test-team-lead/
+    (같은 여섯 장)
+  test-customer/
+    (같은 여섯 장)
+```
+
+- 경로는 `/personas/<avatar_key>/<emotion>.png`이며 `personaImage()` 한 곳에서만 만든다. 감정 라벨은 허용 목록으로 좁히고 `avatar_key`는 `^[a-z0-9-]+$`만 받는다.
+- `avatar_key`가 없거나 규칙에 맞지 않으면 `placeholder.svg`를 쓴다. 파일을 불러오지 못해도 같은 자리 표시자로 바꾼다. **다른 페르소나의 얼굴로 대신하지 않는다.** 사용자가 누구와 이야기하는지 잘못 익히기 때문이다.
+- 면접방에는 페르소나 행이 없어 `avatar_key` 가 비어 있다. 지금은 화면이 `test-team-lead` 를 임시로 빌려 쓴다. 전용 면접관 페르소나를 만들면 `INTERVIEWER_AVATAR_KEY` 상수와 그 분기를 함께 지운다.
+- 화면에 담을 때 위를 기준으로 자른다. 대화 화면은 4:3 상자에, 목록·말풍선 아바타는 정사각형에 `object-fit: cover` 와 `object-position: center top` 을 쓴다. 가운데를 기준으로 자르면 4:5 인물 사진의 머리가 잘린다.
+- 목표와 다른 점: 아직 WebP·썸네일·매니페스트를 쓰지 않고 서비스용 PNG 한 벌만 둔다. `test-team-lead`와 `test-customer`는 `480×600px`(4:5)이고 `campus-senior`만 `480×543px`로 어긋난다. 화면은 `object-fit: cover`라 표시에는 문제가 없으나 다음에 이서준 세트를 다시 만들 때 맞춘다.
+- 생성 원본(`1122×1402px`)은 저장소에 넣지 않는다. 저장소 무게를 키우고 서비스가 쓰지 않기 때문이다. 원본은 12절에 따라 생성 담당자가 보관한다.
+
+## 부록 A. 페르소나별 생성 프롬프트
+
+각 페르소나는 기준 이미지(`neutral`) 하나를 먼저 만들어 승인한 뒤, 그 이미지를 참조로 나머지 다섯 감정을 변형한다. 세 페르소나 × 여섯 감정 = 열여덟 장이다.
+
+6.3절의 네거티브 지시는 모든 프롬프트에 공통으로 함께 넣는다.
+
+### A.1 `campus-senior` — 이서준 선배
+
+이미 승인된 세트가 있다. 아래는 재생성이 필요할 때 쓰는 기준 프롬프트다.
+
+```text
+Photorealistic portrait of a fictional Korean male university student in his
+early twenties, short black hair with a natural fringe, slim oval face, no
+glasses. Wearing a navy knit cardigan over a white crew-neck t-shirt.
+Upper-body portrait, eye-level camera, looking toward the camera, standing in
+front of a bright university building with white concrete walls and windows,
+softly blurred green trees, soft natural daylight, neutral color temperature,
+realistic skin texture, calm and friendly neutral expression, 4:5 composition.
+This must be a fictional person and must not resemble any celebrity or real
+public figure.
+```
+
+### A.2 `test-team-lead` — 김민준 팀장
+
+```text
+Photorealistic portrait of a fictional Korean male team leader in his forties,
+short black hair neatly combed back, angular face, thin black rimmed glasses.
+Wearing a charcoal grey shirt buttoned to the collar. Upper-body portrait,
+eye-level camera, looking toward the camera, bright tidy office with softly
+blurred background, soft indoor lighting, neutral color temperature, realistic
+skin texture, calm and attentive neutral expression, 4:5 composition. This must
+be a fictional person and must not resemble any celebrity or real public figure.
+```
+
+### A.3 `test-customer` — 박서연 고객
+
+```text
+Photorealistic portrait of a fictional Korean woman in her thirties,
+shoulder-length straight black hair, oval face, no glasses. Wearing a beige
+blouse. Upper-body portrait, eye-level camera, looking toward the camera,
+bright indoor consultation space with softly blurred background, soft indoor
+lighting, neutral color temperature, realistic skin texture, composed and
+neutral expression, 4:5 composition. This must be a fictional person and must
+not resemble any celebrity or real public figure.
+```
+
+### A.4 감정 변형 프롬프트
+
+세 페르소나 모두 같은 문장을 쓰고 마지막 구절만 바꾼다. 기준 이미지를 참조 이미지로 함께 넣는다.
+
+```text
+Keep the exact same fictional person, facial identity, hair, glasses, clothing,
+camera angle, crop, lighting and background as the reference image. Change only
+the facial expression to <EXPRESSION>. Do not change age, body position,
+accessories or environment.
+```
+
+| 감정 | `<EXPRESSION>` |
+| --- | --- |
+| `happy` | a natural, restrained happy expression with a gentle smile |
+| `sad` | a calm, mild sadness without tears |
+| `angry` | firm discomfort that is not threatening or aggressive |
+| `curious` | an attentive, restrained expression of wanting to know more |
+| `embarrassment` | visible but understated awkwardness, not exaggerated |
+
+페르소나의 성격에 따라 같은 감정도 세기가 다르다. 4절의 표현 기준을 함께 읽고, 아래 차이를 반영한다.
+
+- `campus-senior`는 후배를 편하게 대하는 선배다. 감정을 크게 드러내되 위압적이지 않다.
+- `test-team-lead`는 팀원에게 정중한 상급자다. 모든 감정을 한 단계 절제해 표현한다. 특히 `angry`는 불만이 아니라 단호함에 가깝다.
+- `test-customer`는 불편을 겪은 고객이다. `angry`와 `embarrassment`가 대화에서 자주 나오므로 이 두 장을 먼저 검수한다.
+
+### A.5 반입 절차
+
+1. 기준 이미지를 만들어 정의서의 `status`를 `approved`로 올린다.
+2. 감정 다섯 장을 변형으로 만들고 여섯 장을 한 화면에서 비교한다(12절).
+3. `public/personas/<avatar_key>/<emotion>.png`로 넣는다. 파일명은 감정 키와 정확히 같아야 한다.
+4. `public.personas.avatar_key`가 폴더 이름과 같은지 확인한다. 다르면 화면은 자리 표시자를 보여 준다.
+5. 화면에서 여섯 감정이 모두 그 인물로 바뀌는지 확인한다. 코드 변경은 필요 없다.

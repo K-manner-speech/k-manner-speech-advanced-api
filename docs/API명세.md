@@ -7,7 +7,7 @@
 ## 1. 계약 원칙
 
 - Base path는 `/api/v1`이다. OpenAPI artifact가 FastAPI와 React generated client의 단일 계약 원본이다.
-- JSON은 `application/json; charset=utf-8`, 파일은 `multipart/form-data`를 사용한다.
+- JSON은 `application/json; charset=utf-8`, 파일은 `multipart/form-data`를 사용한다. 실시간 TTS 중계(`message_audio.stream`)만 `application/octet-stream` chunked 응답을 사용한다.
 - 날짜·시간은 UTC ISO 8601, ID와 `Idempotency-Key`는 UUID다.
 - Browser는 Supabase Auth에서 얻은 access token을 `Authorization: Bearer <token>`으로 전달한다. 비밀번호는 FastAPI로 보내지 않는다.
 - 판정은 서버가 한다. Client가 보낸 owner, 상태, 완료 여부, 질문 연결, Storage key는 신뢰하지 않는다.
@@ -182,6 +182,8 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 
 이메일 변경 API는 두지 않는다. 가입에 쓴 주소가 계정을 가리키는 이름이고, 바뀌면 지난 연습 기록과 결과를 누구 것으로 볼지가 흔들린다. 화면에서도 읽기 전용으로만 보여 준다.
 
+결과 요약은 두 가지다. `summary` 는 무엇을 보고 그렇게 판단했는지 설명하는 문단이고 상세 화면이 쓴다. `short_summary` 는 목록 카드가 쓰는 한 문장이며 45자 이내로 생성하고 60자를 넘기지 않는다. 긴 요약을 잘라 쓰면 문장이 끊겨 무슨 말인지 알 수 없으므로 두 문장을 한 번의 AI 응답에서 함께 받는다. `short_summary` 가 생기기 전에 만들어진 결과에는 이 값이 없고, 화면은 `summary` 를 두 줄까지만 보여 준다.
+
 하루 경계는 `Asia/Seoul` 기준이다. `profiles`에 시간대가 없어 고정값을 쓰며, 클라이언트가 보낸 날짜는 조작할 수 있으므로 서버가 정한다. `streak_days`는 오늘까지 이어진 연속 출석 일수이고, 오늘 아직 출석하지 않았어도 어제까지 이어졌다면 유지한다. 하루가 다 가기 전에 끊긴 것으로 보지 않는다. `recent_days`는 최근 7일 안에서 출석한 날 수이며 하루를 빠뜨려도 0으로 되돌리지 않는다. 추천은 아직 완료하지 않은 시나리오를 먼저 고르고, 같은 날에는 새로고침해도 같은 것을 반환한다. 모두 해본 사용자에게는 빈 카드 대신 그중 하나를 다시 권한다.
 
 진행 중인 동일 조합은 `room.create` 또는 면접방 생성 API에서 기존 방을 반환한다. `completed` 방은 재활성화하지 않고 목록·상세·메시지 조회 대상으로 보존하며, 같은 조합의 새 연습 요청에는 새 방을 생성한다. 완료 방의 text/voice 입력과 AI 응답 재시도는 `409 ROOM_READ_ONLY`다. 이미 완료된 방에 다른 멱등키로 종료를 다시 요청하면 `409 ROOM_ALREADY_COMPLETED`다. `practice_room.complete`는 연습 유형을 가리지 않으므로 면접방 종료를 거부하지 않는다. 질문이 남았거나 목표를 이루지 못한 방도 사용자가 직접 끝낼 수 있어야 하기 때문이다.
@@ -197,9 +199,26 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `message_emotion.retry` | `POST /api/v1/messages/{message_id}/emotion/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | message→room owner와 retryable `failed` 상태를 검증하고 같은 emotion analysis row에 새 Job을 연결한다. |
 | `message_tts.retry` | `POST /api/v1/messages/{message_id}/tts/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 audio logical target, 성공 연결 후 구 object 삭제 |
 | `message_audio.get` | `GET /api/v1/messages/{message_id}/audio` | Bearer | - | path | `200 AudioAccessResponse` | 401,404,409 | current metadata·object prefix 재검증 후 short signed URL; URL 저장/log 금지 |
+| `message_audio.stream` | `GET /api/v1/messages/{message_id}/audio/stream` | Bearer | - | path | `200` PCM octet-stream | 401,404,409 | message→room owner와 current `persona_tts` audio 를 확인하고 생성 중인 PCM 을 그대로 흘려보낸다. Storage signed URL 은 주지 않는다. |
 | `message_repeat.create` | `POST /api/v1/messages/{message_id}/repeat` | Bearer | 필수 | `RepeatRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | 추천 표현/허용 상태 판정 후 새 연습 message와 Job |
 
 감정 결과는 `Message.emotion` 또는 `FeedbackResponse.emotions`로 조회하며 결과값을 직접 수정하는 API는 없다. 감정 분석 재시도는 `message_emotion.retry`만 사용한다. Service는 기존 `message_emotion_analysis` 행을 `processing`으로 전이하고 새 Job과 새 `processing_token`을 연결한다. 이전 처리 토큰의 늦은 결과는 현재 토큰과 일치하지 않으면 저장하지 않는다. `processing|succeeded` 상태, retry 불가능한 오류 또는 기존 유효 Job이 있으면 `409`다.
+
+페르소나 이미지는 `avatar_key` 가 정한다. `persona.list`·`persona.get` 의 `avatar_key`, `room.get` 의 `persona_avatar_key`, `home.get` 의 `recommendation.persona_avatar_key` 가 같은 값이며 화면은 이 키로 이미지 경로를 만든다. 이름을 경로로 바꾸지 않는다. 면접방에는 페르소나 행이 없어 `persona_avatar_key` 가 `null` 이다.
+
+`message_audio.stream`은 음성 생성이 끝나기를 기다리지 않고 재생을 시작하기 위한 endpoint다. `message_audio.get`이 완성된 파일의 short signed URL 을 주는 것과 달리, 이쪽은 Worker 가 채우는 중인 PCM 청크를 인증된 응답으로 중계한다.
+
+| 항목 | 계약 |
+| --- | --- |
+| 응답 | `application/octet-stream` chunked. JSON envelope 를 쓰지 않는다 |
+| 오디오 형식 | `X-Audio-Format: s16le`, `X-Audio-Sample-Rate: 24000`, `X-Audio-Channels: 1` |
+| 캐시 | `Cache-Control: no-store` |
+| 종료 | `message_audio.generation_status`가 `ready` 또는 `failed`가 되고 남은 청크를 다 보낸 뒤 스트림을 닫는다 |
+| 상한 | 한 연결의 최대 대기 시간은 50초다. 넘으면 스트림을 닫으며 client 는 `message_audio.get`으로 완성 음성을 받는다 |
+| 404 | owner 불일치, 메시지 없음, current `persona_tts` audio 없음 |
+| 409 | `AUDIO_STREAM_NOT_AVAILABLE` — audio row 는 있으나 `processing_token`이 없어 중계할 스트림이 없다 |
+
+생성 중 재시도로 `processing_token`이 바뀌면 서버가 새 토큰의 청크를 처음부터 다시 보낸다. Client 는 받은 바이트를 이어 붙이기만 하고 순서를 직접 맞추지 않는다. 이 endpoint 는 재생 시작을 앞당기는 보조 경로이므로, 실패하거나 닫히면 화면은 `message_audio.get`으로 완성 음성을 재생한다.
 
 `completed` 방에서도 기존 `message_feedback.get`과 `message_audio.get`은 허용하여 문장별 피드백 조회와 TTS 재생을 제공한다. 반면 response·feedback·emotion·TTS 재처리와 repeat 생성은 모두 `409 ROOM_READ_ONLY`다. 다시 말하기는 먼저 같은 조합의 새 방을 만든 뒤 그 방에서 수행한다.
 
@@ -210,7 +229,7 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `job.get` | `GET /api/v1/jobs/{job_id}` | Bearer | - | path | `200 Job` | 401,404 | direct job owner + target/result owner 재검증 |
 | `room_result.get` | `GET /api/v1/rooms/{room_id}/result` | Bearer | - | path | `200 SessionResult` | 401,404,409 | room owner; result 없거나 processing 상태 구분 |
 | `room_result.retry` | `POST /api/v1/rooms/{room_id}/result/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 완료 방의 같은 `failed|partial` result row에 새 Job을 만들고 180초 deadline·최대 3회 시도 정책을 적용한다. |
-| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub`. 행마다 `overall_score`와 `summary`를 함께 반환한다. 무엇을 다시 볼지 고르는 화면이라 제목만으로는 고를 수 없다. 아직 생성 중이거나 평가할 발화가 없던 결과에는 둘 다 `null`이다 |
+| `result.list` | `GET /api/v1/results` | Bearer | - | cursor,limit | `200 Page[SessionResultSummary]` | 401,422 | `result.user_id=jwt.sub`. 행마다 `overall_score`와 `short_summary`를 함께 반환한다. 무엇을 다시 볼지 고르는 화면이라 제목만으로는 고를 수 없다. 아직 생성 중이거나 평가할 발화가 없던 결과에는 둘 다 `null`이다 |
 | `result.get` | `GET /api/v1/results/{result_id}` | Bearer | - | path | `200 SessionResult` | 401,404 | result direct owner |
 | `result.delete` | `DELETE /api/v1/results/{result_id}` | Bearer | 필수 | 없음 | `204` | 401,404,409,503 | result/job lifecycle; room에는 영향 없음 |
 
@@ -271,7 +290,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `TermsReplaceRequest` | `consents:[{consent_type,policy_version,accepted:true}]` |
 | `OnboardingStatus` | `completed:boolean`, `missing_requirements:string[]` |
 | `LearningStreak` | `attended_today:boolean`, `streak_days`, `recent_days`, `goal_days:7`, `today:date` |
-| `RecommendedPractice` | `scenario_id`, `title`, `goal|null`, `difficulty|null`, `estimated_minutes|null`, `persona_id|null`, `persona_name|null`, `relationship_label|null`, `opening_message|null`, `completed_before:boolean` |
+| `RecommendedPractice` | `scenario_id`, `title`, `goal|null`, `difficulty|null`, `estimated_minutes|null`, `persona_id|null`, `persona_name|null`, `persona_avatar_key|null`, `relationship_label|null`, `opening_message|null`, `completed_before:boolean` |
 | `HomeSummary` | `streak:LearningStreak`, `recommendation:RecommendedPractice|null` |
 | `MeResponse` | safe profile, language, active consent status, `onboarding_status` |
 | `OnboardingMutationResponse` | 저장된 해당 domain 값 + `onboarding_status` |
@@ -284,7 +303,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | --- | --- |
 | `RoomCreateRequest` | `practice_type:'free_chat'|'scenario'`, `persona_id`, scenario일 때 `scenario_id`; owner/status 금지 |
 | `Room` | `id`, practice/catalog refs, `status:'in_progress'|'completed'`, `turn_count`, `ended_reason:null|'awaiting_user_end'|'goal_achieved'|'max_turns_reached'|'interview_completed'|'user_ended'`, `evaluation_cutoff_message_id|null`, `completed_turn_count|null`, timestamps. 기존 `completed` 사유는 과거 row 조회 호환값이며 신규 write 금지. `goal_achieved`는 종료가 아니라 제안 상태로도 쓰인다: 시나리오가 제한 턴 전에 필수 성공 조건을 채우면 `status`는 `in_progress`인 채 `ended_reason`만 `goal_achieved`가 되고, 사용자가 `practice_room.complete` 또는 `practice_room.continue`로 결정한다 |
-| `RoomDetail` | `Room` + safe relationship/situation/goal + interview configuration ref nullable |
+| `RoomDetail` | `Room` + safe relationship/situation/goal + `persona_avatar_key|null` + interview configuration ref nullable |
 | `MessageCreateRequest` | `content:string`, `input_mode:'text'|'voice'`, 면접이면 `current_interview_question_id`; `client_request_id`는 Idempotency-Key와 같은 UUID 사용 |
 | `Message` | `id`, `room_id`, `sequence_no`, `sender_type`, `content`, `input_mode`, `delivery_status`, `reply_to_message_id|null`, safe emotion/status, timestamps |
 | `MessageAccepted` | `message:Message`, `job:JobRef` |
@@ -299,7 +318,7 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `FeedbackEmotion` | label, percentage, sort order 1..3, source text/voice, safe evidence/impression |
 | `FeedbackResponse` | `status:'processing'|'ready'|'partial'|'failed'`, overall 0..100|null, summary|null, scores, emotions, retryable error|null |
 | `AudioAccessResponse` | `status:'processing'|'ready'|'failed'`, `signed_url|null`, `expires_at|null`, audio type; storage path 금지 |
-| `SessionResultSummary` | `id`, `attempt_no`, `status`, `ended_reason`, `completed_turn_count`, `duration_seconds`, `evaluation_cutoff_message_id|null`, `insufficient_data`, `missing_categories`, `created_at` |
+| `SessionResultSummary` | `id`, `room_id`, `attempt_no`, `practice_type`, `display_title`, `status`, `failure_code|null`, `missing_categories`, `overall_score|null`, `summary|null`, `short_summary|null`, `created_at` |
 | `GeneralScore` | `category`, `score`, `max_score:25`, `strength|null`, `suggestion|null`, `evidence|null`. 자유채팅·시나리오 결과의 항목별 점수이며 연습 전체 기준이다. 면접 결과에서는 비어 있고 `interview_evaluation.scores`가 대신 쓰인다 |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
 | `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
