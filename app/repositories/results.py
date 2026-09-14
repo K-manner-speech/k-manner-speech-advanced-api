@@ -27,7 +27,7 @@ class ResultRepository:
                         where j.session_result_id = s.id
                         order by j.created_at desc, j.id desc limit 1) as failure_code,
                        s.missing_categories, s.created_at, s.overall_score,
-                       s.summary, s.interview_setup_snapshot
+                       s.summary, s.short_summary, s.interview_setup_snapshot
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.room_id = :room_id and r.user_id = :user_id
@@ -52,7 +52,7 @@ class ResultRepository:
                         where j.session_result_id = s.id
                         order by j.created_at desc, j.id desc limit 1) as failure_code,
                        s.missing_categories, s.created_at, s.overall_score,
-                       s.summary, s.interview_setup_snapshot
+                       s.summary, s.short_summary, s.interview_setup_snapshot
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.id = :result_id and s.user_id = :user_id
@@ -75,7 +75,7 @@ class ResultRepository:
                         where j.session_result_id = s.id
                         order by j.created_at desc, j.id desc limit 1) as failure_code,
                        s.missing_categories, s.overall_score, s.summary,
-                       s.created_at
+                       s.short_summary, s.created_at
                 from public.session_results s
                 join public.practice_rooms r on r.id = s.room_id
                 where s.user_id = :user_id

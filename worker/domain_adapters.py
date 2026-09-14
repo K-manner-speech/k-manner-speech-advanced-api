@@ -1752,7 +1752,8 @@ class SessionResultAdapter:
                 """
                 update public.session_results
                 set result_status = :status, overall_score = :overall,
-                    summary = :summary, missing_categories = :missing,
+                    summary = :summary, short_summary = :short_summary,
+                    missing_categories = :missing,
                     updated_at = now()
                 where id = :result_id and user_id = :user_id
                   and result_status = 'processing'
@@ -1764,6 +1765,7 @@ class SessionResultAdapter:
                 "status": status,
                 "overall": overall,
                 "summary": output.result.summary,
+                "short_summary": output.result.short_summary,
                 "missing": missing,
             },
         )

@@ -247,6 +247,10 @@ class InterviewEvaluation(ContractModel):
 
 class SessionResultOutput(ContractModel):
     summary: str | None
+    # 목록 카드는 두 줄까지만 보여 준다. 긴 요약을 잘라 쓰면 문장이 끊겨
+    # 무슨 말인지 알 수 없으므로 짧은 문장을 따로 받는다. 화면 폭 기준으로
+    # 두 줄이 45자쯤이라 조금 넘쳐도 버리지 않도록 60자까지 받는다.
+    short_summary: str | None = Field(max_length=60)
     items: list[ResultItemOutput]
 
 

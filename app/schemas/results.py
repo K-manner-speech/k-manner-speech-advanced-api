@@ -49,6 +49,8 @@ class SessionResultSummary(ContractModel):
     # 평가할 발화가 없던 결과에는 둘 다 없다.
     overall_score: int | None = None
     summary: str | None = None
+    # 목록 카드가 쓰는 한 문장. 예전 결과에는 없어 화면이 summary 로 되돌아간다.
+    short_summary: str | None = None
     created_at: datetime
 
 
