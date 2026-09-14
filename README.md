@@ -39,6 +39,12 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 `["conversation_text","interactive_ai","evaluation_ai","document_analysis"]`입니다. 네
 worker를 모두 실행해야 readiness가 통과하며, DLQ 이름은 이 설정에 넣지 않습니다.
 
+`DATABASE_URL`은 Supabase 풀러의 transaction mode 포트 `6543`을 씁니다. session mode(`5432`)는 동시
+클라이언트가 15개로 제한되어 API와 worker 네 개를 함께 띄우면 `FATAL: (EMAXCONNSESSION) max clients
+reached in session mode`로 DB 에 아예 붙지 못합니다. 이때 readiness 는 연결 실패를 개별 항목 고장과
+구분하지 못해 `failed_checks`에 6개가 모두 나오므로, 전부 실패로 보이면 먼저 포트와 커넥션 한도를
+확인합니다. 커넥션 한도는 Supabase 프로젝트 전체 기준이라 다른 팀원이 붙어 있으면 함께 차감됩니다.
+
 JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`로 허용합니다. 음수는
 설정 오류이며, 필요 이상으로 크게 늘리지 않습니다.
 

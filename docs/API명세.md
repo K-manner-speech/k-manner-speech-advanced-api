@@ -7,7 +7,7 @@
 ## 1. 계약 원칙
 
 - Base path는 `/api/v1`이다. OpenAPI artifact가 FastAPI와 React generated client의 단일 계약 원본이다.
-- JSON은 `application/json; charset=utf-8`, 파일은 `multipart/form-data`를 사용한다.
+- JSON은 `application/json; charset=utf-8`, 파일은 `multipart/form-data`를 사용한다. 실시간 TTS 중계(`message_audio.stream`)만 `application/octet-stream` chunked 응답을 사용한다.
 - 날짜·시간은 UTC ISO 8601, ID와 `Idempotency-Key`는 UUID다.
 - Browser는 Supabase Auth에서 얻은 access token을 `Authorization: Bearer <token>`으로 전달한다. 비밀번호는 FastAPI로 보내지 않는다.
 - 판정은 서버가 한다. Client가 보낸 owner, 상태, 완료 여부, 질문 연결, Storage key는 신뢰하지 않는다.
@@ -197,9 +197,24 @@ Client는 `onboarding_completed`를 어떤 request에도 보낼 수 없다. Loca
 | `message_emotion.retry` | `POST /api/v1/messages/{message_id}/emotion/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | message→room owner와 retryable `failed` 상태를 검증하고 같은 emotion analysis row에 새 Job을 연결한다. |
 | `message_tts.retry` | `POST /api/v1/messages/{message_id}/tts/retry` | Bearer | 필수 | 빈 object | `202 DomainJobAccepted` | 401,404,409,429,503 | 같은 audio logical target, 성공 연결 후 구 object 삭제 |
 | `message_audio.get` | `GET /api/v1/messages/{message_id}/audio` | Bearer | - | path | `200 AudioAccessResponse` | 401,404,409 | current metadata·object prefix 재검증 후 short signed URL; URL 저장/log 금지 |
+| `message_audio.stream` | `GET /api/v1/messages/{message_id}/audio/stream` | Bearer | - | path | `200` PCM octet-stream | 401,404,409 | message→room owner와 current `persona_tts` audio 를 확인하고 생성 중인 PCM 을 그대로 흘려보낸다. Storage signed URL 은 주지 않는다. |
 | `message_repeat.create` | `POST /api/v1/messages/{message_id}/repeat` | Bearer | 필수 | `RepeatRequest` | `202 MessageAccepted` | 401,404,409,422,429,503 | 추천 표현/허용 상태 판정 후 새 연습 message와 Job |
 
 감정 결과는 `Message.emotion` 또는 `FeedbackResponse.emotions`로 조회하며 결과값을 직접 수정하는 API는 없다. 감정 분석 재시도는 `message_emotion.retry`만 사용한다. Service는 기존 `message_emotion_analysis` 행을 `processing`으로 전이하고 새 Job과 새 `processing_token`을 연결한다. 이전 처리 토큰의 늦은 결과는 현재 토큰과 일치하지 않으면 저장하지 않는다. `processing|succeeded` 상태, retry 불가능한 오류 또는 기존 유효 Job이 있으면 `409`다.
+
+`message_audio.stream`은 음성 생성이 끝나기를 기다리지 않고 재생을 시작하기 위한 endpoint다. `message_audio.get`이 완성된 파일의 short signed URL 을 주는 것과 달리, 이쪽은 Worker 가 채우는 중인 PCM 청크를 인증된 응답으로 중계한다.
+
+| 항목 | 계약 |
+| --- | --- |
+| 응답 | `application/octet-stream` chunked. JSON envelope 를 쓰지 않는다 |
+| 오디오 형식 | `X-Audio-Format: s16le`, `X-Audio-Sample-Rate: 24000`, `X-Audio-Channels: 1` |
+| 캐시 | `Cache-Control: no-store` |
+| 종료 | `message_audio.generation_status`가 `ready` 또는 `failed`가 되고 남은 청크를 다 보낸 뒤 스트림을 닫는다 |
+| 상한 | 한 연결의 최대 대기 시간은 50초다. 넘으면 스트림을 닫으며 client 는 `message_audio.get`으로 완성 음성을 받는다 |
+| 404 | owner 불일치, 메시지 없음, current `persona_tts` audio 없음 |
+| 409 | `AUDIO_STREAM_NOT_AVAILABLE` — audio row 는 있으나 `processing_token`이 없어 중계할 스트림이 없다 |
+
+생성 중 재시도로 `processing_token`이 바뀌면 서버가 새 토큰의 청크를 처음부터 다시 보낸다. Client 는 받은 바이트를 이어 붙이기만 하고 순서를 직접 맞추지 않는다. 이 endpoint 는 재생 시작을 앞당기는 보조 경로이므로, 실패하거나 닫히면 화면은 `message_audio.get`으로 완성 음성을 재생한다.
 
 `completed` 방에서도 기존 `message_feedback.get`과 `message_audio.get`은 허용하여 문장별 피드백 조회와 TTS 재생을 제공한다. 반면 response·feedback·emotion·TTS 재처리와 repeat 생성은 모두 `409 ROOM_READ_ONLY`다. 다시 말하기는 먼저 같은 조합의 새 방을 만든 뒤 그 방에서 수행한다.
 
