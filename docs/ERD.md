@@ -470,7 +470,7 @@ erDiagram
 - `session_results` 에는 요약이 두 개다. `summary` 는 판단 근거를 설명하는 문단이고 상세 화면이, `short_summary` 는 60자 CHECK 가 걸린 한 문장이고 목록 카드가 쓴다. 목록은 훑는 화면이고 상세는 읽는 화면이라 필요한 길이가 다르며, 긴 요약을 잘라 쓰면 문장이 끊긴다. 두 문장은 한 번의 AI 응답에서 함께 받는다. 컬럼이 생기기 전 결과에는 `short_summary` 가 없다.
 - `session_results.user_id`가 결과의 최종 owner이며 `result_items`는 부모 결과의 owner를 따른다.
 - `result_items.source_document_id`는 면접 문서를 선택적으로 참조해 결과 근거의 출처를 보존한다.
-- `interview_evaluation_scores.improvement_summary` 는 접힌 보완점 카드에 보여 줄 45자 이내 한 문장이며 CHECK 로 길이를 제한한다. `suggestion_text` 는 펼쳤을 때 읽는 자세한 제안이다. 목록과 상세가 필요한 길이가 달라 따로 받는다.
+- `interview_evaluation_scores.improvement_summary` 는 접힌 보완점 카드에 보여 줄 45자 이내 한 문장이며 CHECK 로 길이를 제한한다. 면접 전체 총평을 저장하는 `session_results.summary`와는 별개의 항목별 값이다. API에서는 전자가 `interview_evaluation.scores[].summary`, 후자가 `interview_evaluation.summary`로 노출되므로 이름이 같아 보여도 JSON 경로와 역할이 다르다. `suggestion_text` 는 펼쳤을 때 읽는 자세한 제안이다. 목록과 상세가 필요한 길이가 달라 따로 받는다.
 - 면접 평가 category는 `question_understanding_fit`, `answer_structure`, `specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude` 다섯 개로 고정하며 각 점수는 1~20 정수다. `(result_id, category)`는 unique다.
 - 면접 점수 다섯 개가 모두 존재할 때만 `session_results.overall_score`는 단순 합계 5~100이고 상태는 `succeeded`다. 일부 누락은 `partial`, 전부 누락은 `failed`이며 두 경우 모두 종합 점수는 `NULL`이고 누락 항목은 `missing_categories`에 기록한다.
 - 면접 결과에는 `pass`, `fail`, `합격`, `불합격` 등의 채용 판정을 저장할 수 없다.

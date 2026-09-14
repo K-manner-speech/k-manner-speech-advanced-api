@@ -321,10 +321,12 @@ Configuration generation은 `public.document_chunks`의 3072차원 pgvector에�
 | `SessionResultSummary` | `id`, `room_id`, `attempt_no`, `practice_type`, `display_title`, `status`, `failure_code|null`, `missing_categories`, `overall_score|null`, `summary|null`, `short_summary|null`, `created_at` |
 | `GeneralScore` | `category`, `score`, `max_score:25`, `strength|null`, `suggestion|null`, `evidence|null`. 자유채팅·시나리오 결과의 항목별 점수이며 연습 전체 기준이다. 면접 결과에서는 비어 있고 `interview_evaluation.scores`가 대신 쓰인다 |
 | `ResultItem` | item/category/title/original/recommended/explanation/evidence/source_document_id|null/order |
-| `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, strength/suggestion/evidence |
+| `InterviewEvaluationScore` | 고정 category 5종, integer score 1..20, max 20, `strength|null`, `suggestion|null`, `summary|null`, `evidence|null`. 응답의 `summary`는 DB의 `improvement_summary`를 접힌 보완점 카드용 이름으로 노출한 45자 이내 요약이며, `suggestion`은 카드를 펼쳤을 때 표시하는 상세 제안이다 |
 | `InterviewEvaluation` | `status:'succeeded'|'partial'|'failed'`, `overall_score:5..100|null`, summary, scores, `missing_categories` |
 | `SessionResult` | summary fields, items, safe source refs, 면접이면 `interview_evaluation`; `insufficient_data=true`이면 `status='succeeded'`, `overall_score=null`; hiring pass/fail 판정 금지 |
 | `DomainJobAccepted` | target `DomainRef`, `job:JobRef` |
+
+면접 결과 응답에는 역할이 다른 두 종류의 `summary`가 있다. `interview_evaluation.summary`는 면접 전체를 종합한 상단 `면접 총평`이고, `interview_evaluation.scores[].summary`는 해당 평가 항목의 접힌 보완점 카드에만 쓰는 짧은 문장이다. 필드 이름은 같지만 JSON 경로와 생성 목적이 다르며 서로 대체하거나 덮어쓰지 않는다. 후자의 저장 컬럼만 `interview_evaluation_scores.improvement_summary`다.
 
 면접 평가 category는 `question_understanding_fit`, `answer_structure`,
 `specificity_evidence`, `job_fit_problem_solving`, `delivery_attitude`의 다섯 항목으로
