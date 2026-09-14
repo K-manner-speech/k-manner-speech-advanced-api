@@ -10,7 +10,7 @@ from wave import open as open_wave
 from app.ai.providers.gemini import GeminiSpeechClient
 from app.repositories.conversation import ConversationRepository
 from app.schemas.common import JobType
-from worker.domain_adapters import TTSAdapter
+from worker.domain_adapters import INTERVIEWER_PROMPT_BUNDLE, TTSAdapter
 from worker.executors import TTSOutput, WorkerExecutors
 from worker.queue import ClaimedJob
 
@@ -101,7 +101,7 @@ def test_tts_executor_publishes_ordered_pcm_chunks_and_builds_final_wav() -> Non
         assert audio.readframes(2) == b"\x00\x00\x01\x00"
 
 
-def _tts_claim(prompt_bundle_key: str | None) -> object:
+def _tts_claim(prompt_bundle_key: str | None, practice_type: str = "free_chat") -> object:
     session = MagicMock()
     session.execute.return_value.mappings.return_value.one_or_none.return_value = {
         "id": uuid4(),
@@ -110,6 +110,7 @@ def _tts_claim(prompt_bundle_key: str | None) -> object:
         "content": "알겠습니다.",
         "persona_emotion": "curious",
         "prompt_bundle_key": prompt_bundle_key,
+        "practice_type": practice_type,
     }
     claim = TTSAdapter(MagicMock()).claim(
         session,
@@ -131,6 +132,19 @@ def test_tts_claim_omits_the_bundle_when_the_persona_has_none() -> None:
 
     assert claim is not None
     assert "prompt_bundle" not in claim.payload
+
+
+def test_tts_claim_gives_the_interviewer_a_voice() -> None:
+    """면접방에는 personas 행이 없어 번들이 빈다.
+
+    그대로 두면 TTS 가 기본 음성으로 떨어져 면접관이 매번 다른 사람처럼
+    들린다. 전용 페르소나가 생기기 전까지 김민준 팀장의 번들을 빌려 쓴다.
+    """
+    claim, session = _tts_claim(None, practice_type="interview")
+
+    assert claim is not None
+    assert claim.payload["prompt_bundle"] == INTERVIEWER_PROMPT_BUNDLE
+    assert "r.practice_type" in str(session.execute.call_args.args[0])
 
 
 def test_tts_claim_carries_the_personas_prompt_bundle() -> None:
