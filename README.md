@@ -1,144 +1,178 @@
-# k-manner-speech-advanced
+# K-Manner Speech API
 
-K-Manner Speech의 FastAPI 백엔드와 Supabase migration을 관리하는 저장소입니다.
+> 관계와 상황에 맞는 한국어 표현을 연습하는 AI 화용 학습 서비스의 API·비동기 AI 처리 서버
 
-## 개발 환경
+[프론트엔드](https://github.com/K-manner-speech/k-manner-speech-advanced-front) · [API 명세](docs/API명세.md) · [아키텍처](docs/아키텍처.md) · [ERD](docs/ERD.md) · [PRD](docs/PRD.md)
 
-- Python 3.11.15
-- FastAPI
-- Pydantic v2
-- Supabase Postgres migration: `supabase/migrations/*.sql`
+## 프로젝트 소개
+
+K-Manner Speech는 외국인 한국어 학습자가 문법을 넘어 **상대방과의 관계·상황·목적에 알맞은 표현**을 연습하도록 돕는 AI 회화 학습 서비스입니다.
+
+학습자는 AI 페르소나와 텍스트 또는 음성으로 자유 대화와 상황별 회화를 연습하고, 자신의 표현이 상대에게 줄 수 있는 인상과 더 자연스러운 대안을 확인할 수 있습니다. 이력서와 지원 조건을 등록하면 문서 근거를 검색하는 RAG 파이프라인으로 사용자별 면접 질문과 평가도 제공합니다.
+
+이 저장소는 FastAPI REST API, 사용자 소유 데이터 접근 제어, PGMQ 기반 비동기 AI Job, Gemini·OpenAI 연동, Supabase PostgreSQL·Storage·pgvector migration을 담당합니다.
+
+## 주요 기능
+
+| 영역 | 기능 |
+| --- | --- |
+| 인증·사용자 | Supabase Auth active session 검증, 온보딩, 프로필, 회원 탈퇴 |
+| AI 회화 | 자유 채팅·상황 시나리오·면접 대화, 페르소나와 최근 문맥 유지 |
+| 음성 | 감정·인상 추정, 스트리밍 TTS와 완성 음성 fallback |
+| 학습 피드백 | 높임법·예의·상황 적합성·자연스러움 평가와 대안 표현 |
+| 맞춤 면접 | PDF/DOCX 분석, pgvector 검색, RAG 질문 생성과 5개 항목 평가 |
+| 결과·복습 | 종료 시점 snapshot 기반 결과, 강점·보완점·근거 제공 |
+| 비동기 처리 | 작업별 deadline·retry·DLQ·heartbeat·stale result 방어 |
+
+감정과 인상은 사실이 아닌 AI의 추정으로 다룹니다. 음성·피드백 등 부가 처리가 실패해도 가능한 텍스트 학습 흐름을 유지하도록 결과를 독립 상태로 관리합니다.
+
+## 시스템 아키텍처
+
+```mermaid
+flowchart LR
+    U[사용자] --> F[React / Vite]
+    F -->|가입·로그인| A[Supabase Auth]
+    F -->|Bearer token| API[FastAPI /api/v1]
+    API --> S[Service]
+    S --> R[Repository]
+    R --> DB[(Supabase PostgreSQL)]
+    S --> ST[Storage Adapter]
+    ST --> O[(Private Storage)]
+    S --> J[Job Publisher]
+    J --> Q[(Supabase Queues / PGMQ)]
+    Q --> W1[Conversation Worker]
+    Q --> W2[Interactive AI Worker]
+    Q --> W3[Evaluation Worker]
+    Q --> W4[Document Worker]
+    W1 --> G[Gemini API]
+    W2 --> G
+    W3 --> G
+    W3 --> OA[OpenAI API]
+    W4 --> OA
+    W4 --> V[(pgvector)]
+    W1 --> DB
+    W2 --> DB
+    W3 --> DB
+    W4 --> DB
+```
+
+- React는 화면 상태를 관리하지만 인증·소유권·종료 가능 여부를 최종 판정하지 않습니다.
+- Service는 유스케이스와 transaction 경계를 소유하고 Repository는 인증된 사용자 ID가 포함된 쿼리만 수행합니다.
+- 외부 AI 호출을 HTTP/DB transaction 안에서 기다리지 않고 영속 Queue와 Worker로 분리합니다.
+- Worker는 호출 전후 owner와 version을 다시 검사해 삭제·교체된 데이터에 늦은 결과가 연결되는 것을 막습니다.
+- 대화 종료 시 평가 기준점을 snapshot으로 고정해 동시에 처리 중이던 결과가 평가 범위를 바꾸지 못하게 합니다.
+
+상세 책임 경계와 상태 전이는 [솔루션 아키텍처](docs/아키텍처.md)를 참고하세요.
+
+## 핵심 기술 선택과 의사결정
+
+### 관계·맥락 기반 화용 학습
+
+- **문제:** 문법적으로 맞는 표현도 상대와 상황에 따라 무례하거나 부자연스러울 수 있습니다.
+- **결정:** 관계·시나리오·목표·최근 대화를 프롬프트 문맥으로 조립하고 표현을 높임법·예의·상황 적합성·자연스러움으로 평가합니다.
+- **결과:** 정답 문장 하나가 아니라 원래 표현의 장점, 문제 이유와 맥락에 맞는 대안을 함께 제공합니다.
+
+### PGMQ와 독립 Worker
+
+- **문제:** 대화, 감정, 피드백, TTS와 문서 분석은 처리 시간과 실패 조건이 달라 한 HTTP 요청에서 모두 기다리면 timeout과 중복에 취약합니다.
+- **결정:** Postgres-native PGMQ와 네 Worker를 사용하고 각 작업에 독립 상태, deadline, retry와 idempotency key를 둡니다.
+- **결과:** 텍스트 성공 후 TTS만 재시도하는 부분 성공이 가능하며 동일 요청이 메시지나 결과를 중복 생성하지 않습니다.
+
+### 사용자 문서 RAG
+
+- **문제:** 일반 질문은 사용자의 이력서와 지원 조건을 반영하지 못하며 다른 사용자의 문서가 검색되면 안 됩니다.
+- **결정:** 문서를 chunk·embedding으로 변환해 pgvector에 저장하고 owner·document version filter를 통과한 chunk만 검색과 재판정에 사용합니다.
+- **결과:** 사용자 자료에 근거한 질문을 만들면서 문서·vector·Storage의 소유권과 삭제 생명주기를 같은 서버 경계에서 관리합니다.
+
+### 스트리밍 TTS와 완성 음성 fallback
+
+- **문제:** 전체 생성을 기다리면 첫 재생이 느리고 스트림만 사용하면 중단 시 복구하기 어렵습니다.
+- **결정:** 생성 중 PCM을 먼저 전달하고 실패하거나 짧게 끝나면 저장된 완성 음성의 미재생 구간으로 전환합니다.
+- **결과:** 빠른 첫 재생과 안정적인 다시 듣기를 함께 제공합니다.
+
+### OpenAPI 기반 Front 계약
+
+FastAPI의 고정 OpenAPI artifact에서 프론트 요청 타입을 생성해 경로·method·DTO 변경을 contract check와 typecheck에서 검출합니다.
+
+## 기술 스택
+
+| 구분 | 기술 |
+| --- | --- |
+| API | Python 3.11.15, FastAPI, Pydantic v2 |
+| Persistence | SQLAlchemy, psycopg, Supabase PostgreSQL |
+| Async Job | Supabase Queues(PGMQ), Python Worker |
+| AI·RAG | Gemini, OpenAI Responses API, OpenAI Embeddings, pgvector |
+| Storage/Auth | Supabase Storage, Supabase Auth |
+| Quality | pytest, Ruff, mypy |
+
+## 빠른 시작
 
 ```bash
 uv python install 3.11.15
 uv venv --python 3.11.15 genai
-source genai/bin/activate
+source genai/bin/activate  # Windows: .\genai\Scripts\Activate.ps1
 uv pip install -r requirements-dev.txt
+```
+
+`.env.example`을 `.env`로 복사하고 Supabase, Gemini, OpenAI 설정을 입력합니다. DB URL, service role key와 AI API key는 서버 환경에만 둡니다. `DATABASE_URL`은 Supabase pooler의 transaction mode 포트 `6543`을 사용합니다.
+
+```bash
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
+```
+
+- Swagger UI: `http://127.0.0.1:8010/docs`
+- Liveness: `GET /api/v1/health/live`
+- Readiness: `GET /api/v1/health/ready`
+
+아래 Worker는 각각 별도 터미널에서 실행합니다.
+
+```bash
+python -m worker.conversation_text
+python -m worker.interactive_ai
+python -m worker.evaluation_ai
+python -m worker.document_analysis
+```
+
+Worker는 hot reload되지 않습니다. AI·Worker·프롬프트 변경 후 다시 시작해야 합니다. 면접 RAG의 현행 DB 계약은 3072차원이므로 `text-embedding-3-large`와 `OPENAI_EMBEDDING_DIMENSIONS=3072`를 사용합니다.
+
+## 검증
+
+```bash
 pytest
 ruff check app worker tests
 mypy app worker
 ```
 
-## 로컬 API 실행
+API와 Worker가 실행 중이고 `.env.test`가 설정되어 있다면 `python -m scripts.remote_demo_smoke`와 `python -m scripts.cleanup_remote_demo`로 원격 시연 흐름을 검증할 수 있습니다.
 
-PowerShell에서 프로젝트 루트로 이동한 뒤 실행합니다.
+## 프로젝트 구조
 
-```powershell
-$env:UV_CACHE_DIR='.uv-cache'
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
+```text
+app/
+├── core/          # 설정, 인증, DB, 공통 오류와 readiness
+├── routers/       # HTTP endpoint와 요청 검증
+├── schemas/       # Pydantic 요청·응답 계약
+├── services/      # 유스케이스, 상태 전이, transaction
+├── repositories/  # owner 조건을 포함한 persistence query
+├── adapters/      # Auth, Storage, 외부 경계
+└── ai/            # AI interface, prompt와 schema
+worker/            # PGMQ consumer와 작업 실행
+supabase/migrations/
+tests/
+scripts/
+docs/
 ```
 
-- Swagger UI: `http://127.0.0.1:8010/docs`
-- Liveness: `GET http://127.0.0.1:8010/api/v1/health/live`
-- Readiness: `GET http://127.0.0.1:8010/api/v1/health/ready`
+## 문서
 
-`.env.example`의 항목을 `.env`에 채워야 합니다. 측정 대상 값에는 코드 기본값이 없으며,
-누락 시 readiness가 안전하게 `503 SERVICE_NOT_READY`를 반환합니다. Ready는 DB, `pgmq`와
-`vector` extension, 8개 queue, timeout policy 8종, 설정을 검사합니다. Worker heartbeat는
-`REQUIRED_WORKER_QUEUES`에 지정된 base queue만 검사하며 로컬 기본값은 현재 구현된
-`["conversation_text","interactive_ai","evaluation_ai","document_analysis"]`입니다. 네
-worker를 모두 실행해야 readiness가 통과하며, DLQ 이름은 이 설정에 넣지 않습니다.
+- [제품 요구사항](docs/PRD.md): 서비스 목표, 사용자 과업과 완료 기준
+- [솔루션 아키텍처](docs/아키텍처.md): 계층·보안 경계, Queue와 상태 전이
+- [API 명세](docs/API명세.md): endpoint와 요청·응답 계약
+- [ERD](docs/ERD.md): 사용자, 대화, 피드백, 면접 문서와 Job 관계
+- [화면 기획서](docs/화면기획서.md): 사용자 흐름과 화면별 요구사항
+- [프로젝트 구조](docs/PROJECT_STRUCTURE_V5.md): Front/API 구조와 의존 방향
+- [코딩 컨벤션](docs/Coding_Convention.md) · [Git 커밋 컨벤션](docs/Git_Commit_Convention.md)
 
-`DATABASE_URL`은 Supabase 풀러의 transaction mode 포트 `6543`을 씁니다. session mode(`5432`)는 동시
-클라이언트가 15개로 제한되어 API와 worker 네 개를 함께 띄우면 `FATAL: (EMAXCONNSESSION) max clients
-reached in session mode`로 DB 에 아예 붙지 못합니다. 이때 readiness 는 연결 실패를 개별 항목 고장과
-구분하지 못해 `failed_checks`에 6개가 모두 나오므로, 전부 실패로 보이면 먼저 포트와 커넥션 한도를
-확인합니다. 커넥션 한도는 Supabase 프로젝트 전체 기준이라 다른 팀원이 붙어 있으면 함께 차감됩니다.
+## 현재 범위
 
-JWT 발급 서버와 로컬 PC 시계의 짧은 차이는 `JWT_LEEWAY_SECONDS=5`로 허용합니다. 음수는
-설정 오류이며, 필요 이상으로 크게 늘리지 않습니다.
-
-현재 API에는 active Auth session 검증, 인증·온보딩·회원 탈퇴·카탈로그·대화·피드백·감정·TTS·결과·면접 문서·면접 구성·Job
-조회가 포함됩니다. Worker는 여덟 Job 유형, 문서 chunk/embedding RAG, 면접 5항목 평가를
-처리합니다. 회원 탈퇴는 private Storage user-prefix object, Job/queue, DB/vector와 Supabase Auth 사용자를 즉시 영구 삭제하며 완료 뒤 멱등 snapshot을 보존하지 않습니다.
-
-## v1.2.2 결과·피드백 구조
-
-면접 결과에는 역할이 다른 전체 총평과 항목별 보완점 요약이 함께 있습니다.
-
-- `session_results.summary`: 면접 전체 총평. API에서는 `interview_evaluation.summary`로 반환
-- `interview_evaluation_scores.improvement_summary`: 접힌 보완점 카드용 45자 이내 항목별 요약. API에서는 `interview_evaluation.scores[].summary`로 반환
-- `interview_evaluation_scores.suggestion_text`: 펼친 카드의 상세 개선 제안. API에서는 `interview_evaluation.scores[].suggestion`으로 반환
-- `interview_evaluation_scores.evidence_text`: 평가 근거가 된 실제 답변. API에서는 `interview_evaluation.scores[].evidence`로 반환
-
-전체 총평과 항목별 요약은 API에서 모두 `summary`라는 이름을 사용하지만 JSON 경로와 생성 목적이 다르며 서로 대체하지 않습니다. 자유채팅·상황 시나리오 결과의 접힌 카드 요약은 별도 점수 테이블이 아니라 `result_items.title`을 사용합니다.
-
-배포 전에는 `supabase/migrations/20260914142000_add_interview_improvement_summary.sql`을 포함한 최신 migration을 순서대로 적용해야 합니다. 프롬프트, `app/ai/schemas.py` 또는 결과 저장 로직을 변경한 배포에서는 API뿐 아니라 `evaluation_ai` worker도 새 코드로 다시 시작해야 합니다.
-
-## 로컬 면접 시연
-
-원격 Supabase schema에 `supabase/migrations/*.sql`을 순서대로 적용하고, `.env`에
-`DATABASE_URL`, Supabase 설정, `OPENAI_API_KEY`, `OPENAI_INTERVIEW_MODEL`,
-`OPENAI_EMBEDDING_MODEL`을 채웁니다. 현재 worker와 `document_chunks.embedding` 계약은
-3072차원이므로 로컬에서는 `OPENAI_EMBEDDING_MODEL=text-embedding-3-large`,
-`OPENAI_EMBEDDING_DIMENSIONS=3072`를 사용합니다.
-API와 base queue Worker 네 개는 서로 다른 PowerShell 창에서 실행해야 합니다.
-
-```powershell
-# 창 1: API
-$env:UV_CACHE_DIR='.uv-cache'
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
-
-# 창 2: 대화 응답 worker
-$env:UV_CACHE_DIR='.uv-cache'
-uv run python -m worker.conversation_text
-
-# 창 3: 감정·TTS worker
-$env:UV_CACHE_DIR='.uv-cache'
-uv run python -m worker.interactive_ai
-
-# 창 4: 피드백·결과·목표 판정 worker
-$env:UV_CACHE_DIR='.uv-cache'
-uv run python -m worker.evaluation_ai
-
-# 창 5: 문서 분석 및 면접 질문 생성 worker
-$env:UV_CACHE_DIR='.uv-cache'
-uv run python -m worker.document_analysis
-```
-
-Worker 는 코드를 다시 읽지 않습니다. API 는 `--reload` 로 뜨지만 worker 는 시작할 때 읽은
-코드로 끝까지 돕니다. 프롬프트(`app/ai/prompts`), AI 계약(`app/ai/schemas.py`), `worker/` 를
-고쳤다면 해당 worker 를 종료하고 다시 띄워야 반영됩니다. 옛 worker 가 살아 있으면 새 worker 와
-같은 queue 를 함께 잡아 결과가 번갈아 나오므로, 다시 띄우기 전에 남아 있는 프로세스가 없는지
-확인합니다.
-
-```bash
-for w in conversation_text interactive_ai evaluation_ai document_analysis; do pkill -f "worker.$w"; done
-ps -eo pid,command | grep "[w]orker\."   # 아무것도 남지 않아야 합니다
-```
-
-Worker 실행 전 `.env`에는 `WORKER_VISIBILITY_TIMEOUT_SECONDS`를 포함한 필수 설정과 기능별
-Provider model ID가 모두 있어야 합니다. embedding model은 DB의 `vector(3072)` 계약과 맞는
-`text-embedding-3-large`만 허용합니다.
-
-Swagger UI에서 Bearer token과 매 요청의 `Idempotency-Key`(새 UUID)를 입력하고 다음 순서로
-시연합니다.
-
-1. `POST /api/v1/interview-setups`
-2. `POST /api/v1/interview-documents` (`resume`, PDF 또는 DOCX)
-3. `POST /api/v1/interview-documents/{document_id}/analyze`
-4. worker가 문서를 청크하고 embedding을 pgvector에 저장한 뒤, 분석 조회 결과가
-   `succeeded`가 될 때까지 조회
-5. `POST /api/v1/interview-configurations`
-6. worker가 직무·조건 query와 유사한 문서 chunk만 검색해 질문을 생성하고, 구성 조회 결과가
-   `ready`가 된 후 질문 목록 조회
-7. 면접 practice room을 생성하고 질문의 `sequence` 순서대로만 답변 전송
-
-면접 구성 생성 Job의 현행 deadline은 OpenAI 응답과 RAG 검색 시간을 포함해 180초입니다.
-
-원격 시연용 계정 값은 `.env.test.example`을 `.env.test`로 복사해 로컬에만 보관합니다.
-`.env.test`는 Git에서 제외됩니다. 시연 후 생성한 setup, document, configuration, room과
-Storage 객체는 해당 테스트 계정 소유 데이터만 정리합니다.
-
-API와 worker가 실행 중이고 `.env.test`에 `API_BASE_URL`, `SUPABASE_TEST_EMAIL`,
-`SUPABASE_TEST_PASSWORD`가 설정되어 있다면 다음 순서로 원격 smoke와 정리를 실행합니다.
-
-```powershell
-$env:UV_CACHE_DIR='.uv-cache'
-uv run --with-requirements requirements-dev.txt python -m scripts.remote_demo_smoke
-uv run --with-requirements requirements-dev.txt python -m scripts.cleanup_remote_demo
-```
-
-Smoke 성공 표시는 `REMOTE_DEMO_OK`입니다. 정리 스크립트는 재사용 가능한 성공 분석 문서를
-보존하고, 그 외 시연 중 생성된 room, configuration, 실패·미완료 분석, job, queue message와
-Storage 객체를 정리합니다. 정리 결과는 `REMOTE_DEMO_CLEANUP_OK`로 출력됩니다.
+현재 저장소는 로컬 개발·시연 환경 기준입니다. 클라우드 배포, 고가용성, autoscaling, OAuth, OCR과 운영 모니터링은 범위에 포함하지 않습니다.
